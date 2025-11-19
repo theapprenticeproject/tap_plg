@@ -1,0 +1,152 @@
+version: '3.8'
+
+services:
+  # ===================================
+  # RABBITMQ - Message Queue
+  # ===================================
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: mentorme-plagiarism-rabbitmq
+    hostname: rabbitmq
+    user: 0:0
+    ports:
+      - "5672:5672"      # AMQP port
+      - "15672:15672"    # Management UI
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS}
+      # Increase heartbeat timeout for slow CPU-only CLIP inference
+      RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: "-rabbit heartbeat 600"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '1'
+          memory: 512M
+    networks:
+      - mentorme-plagiarism-network
+    restart: unless-stopped
+
+  # ===================================
+  # POSTGRESQL - Database
+  # ===================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: mentorme-plagiarism-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+      POSTGRES_MAX_CONNECTIONS: 20
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - mentorme-plagiarism-network
+    restart: unless-stopped
+
+  # ===================================
+  # PGADMIN - Database UI (Optional - disable in production)
+  # ===================================
+  # pgadmin:
+  #   image: dpage/pgadmin4:8
+  #   container_name: mentorme-plagiarism-pgadmin
+  #   ports:
+  #     - "5050:80"
+  #   environment:
+  #     PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+  #     PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin123}
+  #     PGADMIN_CONFIG_SERVER_MODE: 'False'
+  #     PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+  #   volumes:
+  #     - pgadmin_data:/var/lib/pgadmin
+  #   depends_on:
+  #     - postgres
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: '0.25'
+  #         memory: 256M
+  #       reservations:
+  #         cpus: '0.1'
+  #         memory: 128M
+  #   networks:
+  #     - mentorme-plagiarism-network
+  #   restart: unless-stopped
+
+  # ===================================
+  # PLAGIARISM CHECKER SERVICE
+  # ===================================
+  plagiarism-checker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mentorme-plagiarism-checker
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./data/models/:/app/models/
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'  # Increased from 4.0 - allows up to 8 CPU cores
+          memory: 8G
+        reservations:
+          cpus: '2'    # Increased from 1 - guarantees 2 cores minimum
+          memory: 2G
+    restart: unless-stopped
+    networks:
+      - mentorme-plagiarism-network
+
+# ===================================
+# VOLUMES
+# ===================================
+volumes:
+  rabbitmq_data:
+    driver: local
+  postgres_data:
+    driver: local
+  # pgadmin_data:
+  #   driver: local
+
+# ===================================
+# NETWORKS
+# ===================================
+networks:
+  mentorme-plagiarism-network:
+    driver: bridge

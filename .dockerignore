@@ -1,0 +1,115 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# Dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# Build outputs
+dist/
+build/
+out/
+*.egg-info/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Docker
+Dockerfile*
+docker-compose*
+.dockerignore
+
+# Documentation (optional - include if needed)
+*.md
+!README.md
+
+# Test files
+tests/
+test_*.py
+*_test.py
+.pytest_cache/
+coverage/
+.nyc_output/
+htmlcov/
+.coverage
+
+# Logs
+logs/
+*.log
+
+# Data and temp files
+data/
+tmp/
+temp/
+*.tmp
+
+# FAISS index (will be generated)
+faiss_index/
+*.index
+*.bin
+
+# Development scripts
+start-dev-env.*
+.github/
+test/
+tests/
+__tests__/
+*.test.js
+*.spec.js
+
+# Logs
+logs/
+*.log
+
+# Cache directories
+.cache/
+*.pyc
+__pycache__/
+
+# Development and build artifacts
+wheelhouse/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Git and CI
+.git/
+.github/
+data/models/
+data/reference_images/

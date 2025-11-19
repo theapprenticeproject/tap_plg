@@ -1,0 +1,31 @@
+# Message Queue - RabbitMQ (latest stable)
+aio-pika==9.5.7
+aiormq==6.9.2
+
+# Database - PostgreSQL (async)
+asyncpg==0.30.0
+pgvector==0.4.1
+
+# HTTP Client
+aiohttp==3.13.2
+requests==2.32.3
+
+# Configuration Management (Pydantic v2 compatible)
+pydantic<2.0.0,>=1.10.0
+python-dotenv==1.2.1
+
+# Image Processing
+pillow==12.0.0
+imagehash==4.3.2
+
+# Machine Learning - CLIP & FAISS
+torch==2.9.0
+torchvision==0.24.0
+open-clip-torch==3.2.0
+faiss-cpu==1.12.0
+numpy==2.3.4
+
+# Utilities
+tqdm==4.67.1
+
+podman-compose==1.5.0

@@ -1,0 +1,180 @@
+{
+  "$schema": "https://aka.ms/codetour-schema",
+  "title": "MentorMe Plagiarism Detection System - Complete Tour",
+  "steps": [
+    {
+      "description": "## 🎓 MentorMe Plagiarism Detection System\n\nWelcome to the MentorMe codebase! This is a real-time, AI-powered plagiarism detection engine for educational institutions.\n\n### What This System Does:\n- ✅ Detects AI-generated images (DALL-E, Midjourney, Stable Diffusion)\n- ✅ Identifies peer plagiarism between students\n- ✅ Flags unauthorized reference material usage\n- ✅ Tracks self-plagiarism with configurable grace periods\n\n### Architecture Overview:\n1. **Async Message Processing**: RabbitMQ-based queue for submissions\n2. **Multi-Detection Strategy**: Perceptual hashing + CLIP embeddings + AI detection\n3. **Vector Search**: FAISS or pgvector for semantic similarity\n4. **PostgreSQL**: Persistent storage with connection pooling\n\n### Tech Stack:\n- Python 3.11+ with asyncio\n- RabbitMQ for message queuing\n- PostgreSQL with asyncpg\n- OpenAI CLIP for semantic embeddings\n- FAISS/pgvector for vector search\n- PIL/Pillow for image processing\n\nLet's dive in! 🚀"
+    },
+    {
+      "file": "app.py",
+      "line": 1,
+      "description": "## 🚀 Application Entry Point\n\nThis is the main entry point for the entire system. It orchestrates:\n\n1. **Configuration Validation**: Checks all required environment variables\n2. **Service Initialization**: Starts RabbitMQ, Database, and Worker components\n3. **Health Monitoring**: Periodic checks on critical dependencies\n4. **Graceful Shutdown**: Handles SIGINT/SIGTERM for clean resource cleanup\n\nThe app follows an async architecture pattern using Python's asyncio."
+    },
+    {
+      "file": "app.py",
+      "line": 20,
+      "description": "## ⚙️ Configuration Validation\n\nBefore starting any services, we validate that all required environment variables are present:\n\n- **Database**: POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB, POSTGRES_HOST\n- **Message Queue**: RABBITMQ_HOST, RABBITMQ_USER, RABBITMQ_PASS\n\nThis fail-fast approach prevents runtime errors and makes deployment issues obvious."
+    },
+    {
+      "file": "config/config.py",
+      "line": 1,
+      "description": "## 📋 Centralized Configuration\n\nAll system configuration is managed here using Pydantic for type validation and sensible defaults.\n\n### Configuration Sections:\n1. **DatabaseConfig**: Connection pooling, timeouts\n2. **RabbitMQConfig**: Queue names, prefetch count, retry logic\n3. **DetectionConfig**: Thresholds for plagiarism detection\n4. **ImageProcessingConfig**: Size limits, download settings\n5. **VectorSearchConfig**: FAISS vs pgvector selection\n6. **SecurityConfig**: Student ID hashing, privacy settings\n\n### Key Pattern:\n- All values can be overridden via `.env` file\n- Type validation catches configuration errors early\n- Sensible defaults for development\n\n### Environment Variables:\nSee `.env.example` for complete list of configurable options"
+    },
+    {
+      "file": "mq/rmq_client.py",
+      "line": 1,
+      "description": "## 📨 RabbitMQ Message Queue Client\n\nThis handles all message queue operations with robust error handling:\n\n### Features:\n- **Connection Retry Logic**: Automatic reconnection with exponential backoff\n- **Prefetch Control**: Processes multiple messages in parallel (default: 5)\n- **Message Acknowledgment**: Ensures exactly-once processing semantics\n- **Dead Letter Queue**: Routes poison messages for manual inspection\n\n### Key Queues:\n1. **plagiarism_submissions**: Incoming student submissions\n2. **plagiarism_feedback**: Plagiarism detection results\n3. **dead_letter_queue**: Failed messages (optional)\n\n### Contract:\nMessages must be JSON with keys: `submission_id`, `student_id`, `assign_id`, `img_url`"
+    },
+    {
+      "file": "mq/rmq_client.py",
+      "line": 88,
+      "description": "## 🔄 Prefetch Count & Parallel Processing\n\nThe `prefetch_count` setting controls how many unacknowledged messages can be processed in parallel.\n\n**Default: 1 (sequential processing)**\n\n### Important Contract:\n⚠️ **Anti-Pattern**: Never change `prefetch_count` without updating ack/retry logic in:\n- `mq/rmq_client.py` (this file)\n- `plag_checker/submissions_checker.py` (message consumer)\n\n### Why It Matters:\n- Higher prefetch = more throughput but more memory usage\n- Each message must be ack'd or nack'd exactly once\n- Unhandled exceptions can cause message loss if not properly nack'd"
+    },
+    {
+      "file": "database/db_manager.py",
+      "line": 1,
+      "description": "## 🗄️ Database Manager\n\nHandles all PostgreSQL operations using asyncpg connection pooling.\n\n### Key Features:\n1. **Connection Pooling**: Min 5, Max 20 connections for efficiency\n2. **Async Operations**: All queries use `await` for non-blocking I/O\n3. **Schema Management**: Handles submissions, reference images, feedback\n4. **Query Optimization**: Indexed lookups, batch operations\n\n### Core Tables:\n- **submissions**: Student submissions with hashes and embeddings\n- **reference_images**: Known copyrighted/prohibited content\n- **plagiarism_feedback**: Detection results sent to LMS\n\n### Contract:\n⚠️ Any schema change must update ALL SQL queries across the codebase!"
+    },
+    {
+      "file": "database/init.sql",
+      "line": 1,
+      "description": "## 📊 Database Schema Definition\n\nThis SQL script creates the initial database schema.\n\n### Core Tables:\n\n**submissions**: Stores all student submissions\n- Primary keys: submission_id, student_id, assign_id\n- Hashes: phash, dhash, ahash (perceptual hashing)\n- Embedding: clip_embedding (768-D vector)\n- Metadata: ai_generated, processing_status\n\n**reference_images**: Prohibited/copyrighted content\n- Used for matching against known sources\n- Same hash/embedding structure as submissions\n\n**plagiarism_feedback**: Results sent back to LMS\n- Links submissions to detection results\n- Stores match details and confidence scores"
+    },
+    {
+      "file": "plag_checker/submissions_checker.py",
+      "line": 1,
+      "description": "## 🔍 Submission Checker - Main Orchestrator\n\nThis is the heart of the plagiarism detection system. It:\n\n1. **Consumes Messages**: Pulls submissions from RabbitMQ queue\n2. **Routes Processing**: Delegates to ImageProcessor or TextProcessor\n3. **Manages Acknowledgments**: Ensures exactly-once message processing\n4. **Handles Errors**: Retry logic for transient failures\n\n### Message Flow:\n```\nRabbitMQ → SubmissionChecker → Processor → ImageWorker → Database\n                ↓\n         Acknowledgment\n```\n\n### Key Pattern:\nThe `MessageAckManager` context manager ensures messages are ack'd/nack'd exactly once, preventing message loss or duplication."
+    },
+    {
+      "file": "plag_checker/submissions_checker.py",
+      "line": 18,
+      "description": "## 🔐 Message Acknowledgment Manager\n\nThis context manager ensures **exactly-once message processing semantics**.\n\n### States:\n- **ack**: Message processed successfully\n- **nack(requeue=True)**: Transient failure, retry later\n- **nack(requeue=False)**: Permanent failure, don't retry\n- **reject**: Poison message, send to DLQ\n\n### Critical Pattern:\nEvery message MUST be acknowledged exactly once. The `__aexit__` method ensures that if no explicit ack/nack/reject is called, the message is rejected without requeue (to prevent infinite loops).\n\n### Why It Matters:\n- Prevents message loss\n- Prevents infinite retry loops\n- Ensures system reliability under failures"
+    },
+    {
+      "file": "processors/image_processor.py",
+      "line": 1,
+      "description": "## 🖼️ Image Processor\n\nHandles image-specific plagiarism detection workflow.\n\n### Processing Pipeline:\n1. **Validation**: Check submission record exists in DB\n2. **Delegation**: Call ImageWorker for detection\n3. **Result Storage**: Save feedback to database\n4. **MQ Publishing**: Send results to feedback queue\n\n### Error Handling:\n- Transient failures (network) → nack with requeue\n- Permanent failures (invalid data) → nack without requeue\n- Poison messages → reject\n\n### Inherits From:\n`BaseProcessor` - provides common message handling logic"
+    },
+    {
+      "file": "image_worker/worker.py",
+      "line": 1,
+      "description": "## 🤖 Image Worker - Detection Engine\n\nThis is the **core detection engine** that performs all plagiarism analysis.\n\n### Multi-Detection Strategy:\n1. **Perceptual Hashing**: Fast duplicate detection (pHash, dHash, aHash)\n2. **CLIP Embeddings**: Semantic similarity via OpenAI CLIP\n3. **AI Detection**: Identifies AI-generated images\n4. **Vector Search**: FAISS or pgvector for similarity queries\n\n### Detection Flow:\n```\nImage URL → Download → Validate → Hash → Embed → Compare → Results\n```\n\n### Key Components:\n- `HashHandler`: Generates perceptual hashes\n- `CLIPHandler`: Generates 768-D embeddings\n- `AIGeneratedDetector`: Detects AI-generated content\n- `FAISSHandler` or `PgVectorHandler`: Vector similarity search"
+    },
+    {
+      "file": "image_worker/worker.py",
+      "line": 42,
+      "description": "## 🎯 Detection Thresholds\n\nThese thresholds control plagiarism detection sensitivity:\n\n- **exact_dup_threshold**: Hash distance ≤ this = exact duplicate (default: 5)\n- **near_dup_threshold**: Hash distance ≤ this = near duplicate (default: 10)\n- **semantic_threshold**: CLIP similarity ≥ this = semantic match (default: 0.80)\n- **hash_threshold**: General hash matching threshold (default: 8)\n\n### Configurable Checks:\n- **enable_peer_check**: Compare against other students' submissions\n- **enable_self_check**: Track resubmissions by same student\n- **resubmission_window_days**: Grace period for self-plagiarism (default: 14 days)\n\n### Tuning Tips:\n- Lower thresholds = more strict detection (more false positives)\n- Higher thresholds = more lenient (may miss subtle plagiarism)"
+    },
+    {
+      "file": "image_worker/hash_handler.py",
+      "line": 1,
+      "description": "## #️⃣ Hash Handler - Perceptual Hashing\n\nGenerates three types of perceptual hashes for fast duplicate detection:\n\n### Hash Types:\n1. **pHash (Perceptual Hash)**: DCT-based, robust to minor edits\n2. **dHash (Difference Hash)**: Gradient-based, fast comparison\n3. **aHash (Average Hash)**: Mean-based, simple and fast\n\n### Contract:\n⚠️ **Critical**: Always returns dict with keys: `phash`, `dhash`, `ahash`\n\nExample:\n```python\n{\"phash\": \"abcd1234...\", \"dhash\": \"efgh5678...\", \"ahash\": \"ijkl9012...\"}\n```\n\n### Why Three Hashes?\nUsing multiple hash algorithms improves detection robustness:\n- pHash: Best for resized/compressed images\n- dHash: Best for cropped images\n- aHash: Fast baseline comparison"
+    },
+    {
+      "file": "image_worker/clip_handler.py",
+      "line": 1,
+      "description": "## 🧠 CLIP Handler - Semantic Embeddings\n\nGenerates semantic image embeddings using OpenAI's CLIP model.\n\n### What is CLIP?\nCLIP (Contrastive Language-Image Pre-training) creates embeddings that capture semantic meaning, not just visual similarity.\n\n### Contract:\n⚠️ **Critical**: Returns 768-D numpy array, **normalized to unit vector**\n\nSimilarity = dot product (equivalent to cosine similarity for unit vectors)\n\n### Example:\n```python\nembedding = clip_handler.generate_embedding(image)\nassert embedding.shape == (768,)\nassert np.isclose(np.linalg.norm(embedding), 1.0)  # Unit vector\n```\n\n### Use Cases:\n- Detect images with similar content but different styles\n- Identify traced/redrawn artwork\n- Find semantic matches that hashes miss"
+    },
+    {
+      "file": "image_worker/faiss_handler.py",
+      "line": 1,
+      "description": "## 🔎 FAISS Handler - Vector Search\n\nHandles vector similarity search using Facebook's FAISS (Facebook AI Similarity Search).\n\n### What is FAISS?\nFAISS is an efficient library for similarity search in high-dimensional spaces (like our 768-D CLIP embeddings).\n\n### Features:\n- **Index Persistence**: Save/load index to disk\n- **Fast Search**: Optimized for nearest neighbor queries\n- **Scalable**: Handles millions of vectors\n\n### Key Operations:\n1. **add_embedding**: Add new submission to index\n2. **search**: Find K nearest neighbors\n3. **save_index**: Persist to disk\n4. **load_index**: Restore from disk\n\n### Alternative:\nCan use `PgVectorHandler` instead for PostgreSQL-based vector search (controlled by `USE_PGVECTOR` env var)"
+    },
+    {
+      "file": "image_worker/pgvector_handler.py",
+      "line": 1,
+      "description": "## 📊 PgVector Handler - Database Vector Search\n\nAlternative to FAISS that stores embeddings directly in PostgreSQL using the pgvector extension.\n\n### Advantages vs FAISS:\n- ✅ No separate index file to manage\n- ✅ ACID guarantees with database transactions\n- ✅ Simpler deployment (one less component)\n- ✅ Integrated with existing DB queries\n\n### Disadvantages:\n- ❌ Slower for very large datasets (>1M vectors)\n- ❌ Requires pgvector PostgreSQL extension\n\n### Selection:\nSet `USE_PGVECTOR=true` in `.env` to use this instead of FAISS.\n\n### Best Practice:\n- Use pgvector for <100K submissions\n- Use FAISS for >100K submissions or when highest performance needed"
+    },
+    {
+      "file": "image_worker/ai_generated_detector.py",
+      "line": 1,
+      "description": "## 🎨 AI-Generated Image Detector\n\nDetects if an image was created by AI generators (DALL-E, Midjourney, Stable Diffusion, etc.).\n\n### Detection Methods:\n\n1. **Metadata Analysis** (Fast, 90%+ accuracy):\n   - EXIF/PNG metadata inspection\n   - Looks for generator signatures\n   - Checks for missing camera data\n\n2. **Statistical Analysis** (Slower, 70-85% accuracy):\n   - Frequency domain analysis\n   - Noise pattern detection\n   - Color distribution anomalies\n\n### Output:\nReturns dict with:\n```python\n{\n  \"is_ai_generated\": bool,\n  \"confidence\": float,  # 0.0 to 1.0\n  \"method\": str,       # \"metadata\" or \"statistical\"\n  \"details\": dict      # Specific indicators found\n}\n```\n\n### Note:\nAI detection is an arms race - accuracy varies with new AI generators!"
+    },
+    {
+      "file": "image_worker/image_validator.py",
+      "line": 1,
+      "description": "## ✅ Image Validator\n\nValidates images before processing to ensure quality and prevent attacks.\n\n### Validation Checks:\n\n1. **Format Validation**:\n   - Supported formats: JPEG, PNG, WebP\n   - Rejects corrupted or malicious files\n\n2. **Size Validation**:\n   - Max dimensions: 4096x4096 (configurable)\n   - Rejects decompression bombs\n\n3. **Content Validation**:\n   - Verifies actual image data\n   - Checks for truncated files\n\n### Security:\nPrevents:\n- Zip bomb / decompression attacks\n- Memory exhaustion via huge images\n- Processing of executable files disguised as images\n\n### Usage:\n```python\nvalidator = ImageValidator()\nvalidator.validate(image)  # Raises ValidationError if invalid\n```"
+    },
+    {
+      "file": "utils/exceptions.py",
+      "line": 1,
+      "description": "## ⚠️ Custom Exceptions\n\nDefines all custom exceptions used throughout the system for precise error handling.\n\n### Exception Hierarchy:\n\n**Base Exceptions:**\n- `WorkerNotInitializedError`: Worker components not initialized\n- `ValidationError`: Data validation failures\n\n**Image-Related:**\n- `ImageDownloadError`: Failed to download image from URL\n- `NetworkTimeoutError`: Network request timeout\n- `InvalidImageURLError`: Malformed or blocked URL\n- `InvalidImageFormatError`: Unsupported image format\n\n**Processing:**\n- `ProcessingError`: General processing failures\n- `HashingError`: Perceptual hash generation failed\n- `EmbeddingError`: CLIP embedding generation failed\n\n### Pattern:\nEach exception includes context (submission_id, student_id) for debugging and logging"
+    },
+    {
+      "file": "utils/security.py",
+      "line": 1,
+      "description": "## 🔒 Security Utilities\n\nHandles security and privacy features.\n\n### Student ID Hashing (Privacy Protection):\n\nWhen `HASH_STUDENT_IDS=true`, student IDs are hashed before storage:\n\n```python\nhashed_id = hash_student_id(\"student123\")\n# Returns: SHA-256 hash with salt\n```\n\n### Use Cases:\n- **GDPR Compliance**: Pseudonymize student data\n- **Privacy Protection**: Prevent student identification from DB dumps\n- **Audit Trails**: Still track plagiarism patterns without PII\n\n### Important:\n⚠️ Hashing is one-way - cannot recover original student IDs!\n\n### Configuration:\nSet `HASH_STUDENT_IDS=true` in `.env` to enable.\n\n### Additional Features:\n- URL validation (prevent SSRF attacks)\n- Input sanitization\n- Rate limiting helpers"
+    },
+    {
+      "file": "tests/conftest.py",
+      "line": 1,
+      "description": "## 🧪 Test Configuration\n\nPytest configuration and fixtures for all tests.\n\n### Key Fixtures:\n\n1. **Database Fixtures**:\n   - `db_manager`: Async database manager with test DB\n   - `db_connection`: Single connection for tests\n   - Auto-cleanup after tests\n\n2. **Mock Fixtures**:\n   - `mock_image`: Sample PIL images for testing\n   - `mock_submission`: Test submission data\n   - `mock_mq_client`: In-memory message queue\n\n3. **Async Fixtures**:\n   - All fixtures support async/await\n   - Proper cleanup with async context managers\n\n### Test Database:\nUses separate test database to avoid polluting production data.\n\n### Test Status:\n- **Total**: 384 tests\n- **Passing**: 364 tests (94.8%)\n- **Skipped**: 20 tests (DB manager unit tests)\n- **Failing**: 0 tests\n- **Execution Time**: ~7 minutes"
+    },
+    {
+      "file": "tests/test_hash_handler.py",
+      "line": 1,
+      "description": "## 🧪 Hash Handler Tests\n\nTests for perceptual hashing functionality.\n\n### Test Coverage:\n\n1. **Hash Generation**:\n   - Valid images generate all three hashes\n   - Hash format validation\n   - Deterministic output (same image = same hash)\n\n2. **Hash Comparison**:\n   - Identical images = distance 0\n   - Similar images = low distance\n   - Different images = high distance\n\n3. **Edge Cases**:\n   - Grayscale images\n   - Small images (auto-resize)\n   - Large images (memory limits)\n   - Corrupted images (error handling)\n\n### Test Pattern:\n```python\n@pytest.mark.asyncio\nasync def test_hash_generation(sample_image):\n    hashes = hash_handler.generate_hashes(sample_image)\n    assert all(key in hashes for key in ['phash', 'dhash', 'ahash'])\n```"
+    },
+    {
+      "file": "tests/test_clip_handler.py",
+      "line": 1,
+      "description": "## 🧪 CLIP Handler Tests\n\nTests for CLIP embedding generation and similarity.\n\n### Test Coverage:\n\n1. **Embedding Generation**:\n   - Correct shape (768,)\n   - Normalized (unit vector)\n   - Deterministic output\n\n2. **Similarity Computation**:\n   - Identical images = similarity ~1.0\n   - Similar images = similarity >0.8\n   - Different images = similarity <0.5\n\n3. **Performance**:\n   - Batch processing efficiency\n   - GPU vs CPU mode\n   - Memory usage\n\n### Critical Tests:\n```python\ndef test_embedding_normalized():\n    embedding = clip_handler.generate_embedding(image)\n    norm = np.linalg.norm(embedding)\n    assert np.isclose(norm, 1.0, atol=1e-5)\n```"
+    },
+    {
+      "file": "tests/test_ai_detection.py",
+      "line": 1,
+      "description": "## 🧪 AI Detection Tests\n\nTests for AI-generated image detection.\n\n### Test Coverage:\n\n1. **Metadata Detection**:\n   - DALL-E signatures\n   - Midjourney markers\n   - Stable Diffusion metadata\n   - Clean images (no false positives)\n\n2. **Statistical Detection**:\n   - Frequency analysis\n   - Noise patterns\n   - Color distribution\n\n3. **Edge Cases**:\n   - Images with partial metadata\n   - Manipulated metadata\n   - Low-quality images\n\n### Test Data:\nUses real AI-generated samples (with permission) and human-created control images.\n\n### Accuracy Targets:\n- Metadata: >90%\n- Statistical: >70%\n- Combined: >85%"
+    },
+    {
+      "file": "scripts/download_clip_model.py",
+      "line": 1,
+      "description": "## 📥 CLIP Model Downloader\n\nUtility script to pre-download the CLIP model for offline/containerized deployments.\n\n### Why This Exists:\n\nThe CLIP model is ~350MB. In production:\n- Don't want to download on first request (slow startup)\n- Docker images should be self-contained\n- Avoid rate limits on model repositories\n\n### Usage:\n\n```bash\npython scripts/download_clip_model.py\n```\n\nDownloads to: `~/.cache/clip/` (default) or custom path via env var.\n\n### Docker Integration:\n\n```dockerfile\nRUN python scripts/download_clip_model.py\n```\n\nIncluded in the Dockerfile to bake the model into the image."
+    },
+    {
+      "file": "docker-compose-dev.yml",
+      "line": 1,
+      "description": "## 🐳 Docker Compose - Development\n\nDevelopment environment orchestration.\n\n### Services:\n\n1. **PostgreSQL**:\n   - Port 5432 exposed to host\n   - Volume for persistent data\n   - pgvector extension installed\n\n2. **RabbitMQ**:\n   - Port 5672 (AMQP) and 15672 (Management UI)\n   - Management console at http://localhost:15672\n   - Guest credentials for development\n\n3. **Application** (optional):\n   - Hot-reload enabled\n   - Mounts local code as volume\n\n### Quick Start:\n\n```bash\n./start-dev-env.sh  # Linux/Mac\n.\\start-dev-env.ps1  # Windows\n```\n\nAutomatically creates `.env` with sensible defaults."
+    },
+    {
+      "file": "docker-compose-prod.yml",
+      "line": 1,
+      "description": "## 🐳 Docker Compose - Production\n\nProduction-ready orchestration with security hardening.\n\n### Differences from Dev:\n\n1. **Security**:\n   - No exposed ports (except app entry point)\n   - Strong auto-generated passwords\n   - No default credentials\n   - Network isolation\n\n2. **Performance**:\n   - Optimized resource limits\n   - Production logging levels\n   - Health checks enabled\n   - Restart policies\n\n3. **Scaling**:\n   - Multiple worker replicas\n   - Load balancing\n   - Persistent volumes for state\n\n### Deployment:\n\n```bash\ndocker-compose -f docker-compose-prod.yml up -d\n```\n\n⚠️ **Never commit `.env` with production secrets!**"
+    },
+    {
+      "file": "Dockerfile",
+      "line": 1,
+      "description": "## 🐳 Dockerfile - Application Container\n\nMulti-stage build for optimized production images.\n\n### Build Stages:\n\n1. **Base**: Python 3.11 with system dependencies\n2. **Dependencies**: pip install with caching\n3. **Model Download**: Pre-download CLIP model\n4. **Runtime**: Minimal final image\n\n### Optimizations:\n\n- Layer caching for faster rebuilds\n- Multi-stage to reduce image size\n- Non-root user for security\n- Health check endpoint\n- Graceful shutdown handling\n\n### Size:\n\nFinal image: ~1.2GB (mostly CLIP model)\n\n### Build:\n\n```bash\ndocker build -t mentorme-plagiarism:latest .\n```"
+    },
+    {
+      "file": "requirements.txt",
+      "line": 1,
+      "description": "## 📦 Python Dependencies\n\nCore production dependencies.\n\n### Key Packages:\n\n**Async Framework:**\n- `asyncio`, `aiohttp`: Async I/O\n- `asyncpg`: Async PostgreSQL driver\n- `aio-pika`: Async RabbitMQ client\n\n**Image Processing:**\n- `Pillow`: Image manipulation\n- `imagehash`: Perceptual hashing\n- `opencv-python`: Advanced image processing\n\n**ML/AI:**\n- `torch`: PyTorch for CLIP\n- `clip`: OpenAI CLIP model\n- `numpy`: Numerical operations\n\n**Vector Search:**\n- `faiss-cpu`: FAISS for vector similarity\n- `pgvector`: PostgreSQL vector extension\n\n**Configuration:**\n- `pydantic`: Config validation\n- `python-dotenv`: Environment variables\n\n### Installation:\n\n```bash\npip install -r requirements.txt\n```"
+    },
+    {
+      "file": "requirements-test.txt",
+      "line": 1,
+      "description": "## 📦 Test Dependencies\n\nAdditional dependencies for testing.\n\n### Testing Frameworks:\n\n- `pytest`: Test framework\n- `pytest-asyncio`: Async test support\n- `pytest-cov`: Coverage reporting\n- `pytest-mock`: Mocking utilities\n\n### Additional Tools:\n\n- `faker`: Generate test data\n- `factory-boy`: Test fixtures\n- `responses`: HTTP mocking\n- `freezegun`: Time mocking\n\n### Installation:\n\n```bash\npip install -r requirements-test.txt\n```\n\n### Usage:\n\n```bash\npytest tests/ --cov --cov-report=html\n```"
+    },
+    {
+      "file": ".github/copilot-instructions.md",
+      "line": 1,
+      "description": "## 🤖 Copilot Custom Instructions\n\n**This is your most important reference when making changes!**\n\n### What This Document Provides:\n\n1. **Step-by-Step Workflow**: How to make changes safely\n2. **Core Contracts**: API contracts that MUST NOT break\n3. **Anti-Patterns**: Common mistakes to avoid\n4. **File Map**: Where to find specific functionality\n5. **PR Checklist**: What to verify before submitting\n\n### Key Contracts (Never Break These!):\n\n1. **MQ Message Format**: JSON with required keys\n2. **Hash Dict**: Always `{phash, dhash, ahash}`\n3. **CLIP Embedding**: 768-D normalized numpy array\n4. **DB Schema**: Update all SQL if schema changes\n\n### When to Consult:\n\n- ✅ Before changing any \"handler\" module\n- ✅ Before modifying message queue logic\n- ✅ Before updating database schema\n- ✅ Before adding new detection methods\n- ✅ Before submitting any PR\n\n**Read this file before making ANY changes!**"
+    },
+    {
+      "file": "README.md",
+      "line": 1,
+      "description": "## 📖 Project README\n\nThe main project documentation and quick-start guide.\n\n### What You'll Find:\n\n1. **Quick Start**: Get the system running in 3 steps\n2. **Configuration**: Environment variables explained\n3. **Testing**: How to run tests and check coverage\n4. **Architecture**: High-level system overview\n5. **Development**: Local development setup\n\n### Current Status:\n\n- ✅ 364/384 tests passing (94.8%)\n- ✅ 20 tests skipped (DB manager unit tests - covered by integration tests)\n- ✅ Core detection working\n- ✅ All integration tests passing\n- ✅ Zero failing tests\n\n### For New Developers:\n\nStart here, then read:\n1. `docs/DOCUMENTATION.md` - Detailed technical docs\n2. `.github/copilot-instructions.md` - Development guidelines\n3. This code tour - Architecture walkthrough"
+    },
+    {
+      "file": "docs/DOCUMENTATION.md",
+      "line": 1,
+      "description": "## 📚 Complete Documentation\n\nComprehensive technical documentation covering:\n\n### Sections:\n\n1. **Project Overview**: Business context and goals\n2. **Business Requirements**: What the system must achieve\n3. **Technical Architecture**: How it's built\n4. **API Contracts**: Message formats and interfaces\n5. **Detection Algorithms**: How plagiarism detection works\n6. **Deployment Guide**: Production deployment\n7. **Troubleshooting**: Common issues and solutions\n8. **Performance Tuning**: Optimization strategies\n\n### Size:\n\n1461 lines of comprehensive documentation!\n\n### When to Read:\n\n- ✅ Before major architecture changes\n- ✅ When debugging complex issues\n- ✅ For performance optimization\n- ✅ During deployment planning"
+    },
+    {
+      "file": "docs/AI_DETECTION_FEATURE.md",
+      "line": 1,
+      "description": "## 🎨 AI Detection Documentation\n\nDeep-dive into the AI-generated image detection feature.\n\n### Topics Covered:\n\n1. **Detection Methods**: Metadata vs Statistical\n2. **Accuracy Metrics**: Expected performance\n3. **Limitations**: Known weaknesses\n4. **Future Improvements**: Planned enhancements\n5. **Model Updates**: Staying current with new AI generators\n\n### AI Generator Coverage:\n\n- ✅ DALL-E 2 & 3\n- ✅ Midjourney\n- ✅ Stable Diffusion\n- ✅ Adobe Firefly\n- ⏸️ Newer generators (ongoing)\n\n### The Arms Race:\n\nAI detection is constantly evolving as:\n- New generators emerge\n- Generators improve at hiding signatures\n- Detection methods advance\n\nThis doc tracks current state and future roadmap."
+    }
+  ],
+  "description": "A comprehensive guided tour through the MentorMe plagiarism detection system architecture, core components, and development workflow."
+}

@@ -1,0 +1,89 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+logs/
+*.log
+
+# Data files
+data/
+!data/.gitkeep
+*.bin
+*.index
+*.json
+temp_images/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+docker-compose.override.yml
+
+# FAISS index files
+faiss_index.bin
+faiss_metadata.json
+
+# CLIP model cache
+~/.cache/clip/
+
+# Test images
+test_images/
+!test_images/.gitkeep
+
+# Database backups
+*.dump
+database/dumps/*.sql
+database/dumps/*.sql.gz
+database/dumps/*.zip
+!database/dumps/README.md
+
+# Database init.sql should be tracked
+!database/init.sql
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Coverage
+.coverage
+htmlcov/
+
+# PyTest
+.pytest_cache/
+
+# Unwanted files (temporary, backup, migration scripts)
+unwanted_files/
+
+# Dataset folder (large files)
+DataSet/
+
+wheelhouse
+
+# Model files (large binary files)
+models/*.pkl
+
+# CLIP Model Files (large binary files)
+models/clip/**/*.bin
+models/clip/**/*.pt
+models/clip/**/*.pth
