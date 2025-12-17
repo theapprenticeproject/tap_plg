@@ -30,6 +30,10 @@ def validate_configuration():
     ]
 
     missing = [var for var in required_env_vars if not os.getenv(var)]
+    #print the required env vars and their values for debugging
+    # for var in required_env_vars:
+    #     logger.info("###################")
+    #     logger.info(f"{var}={os.getenv(var)}")
     if missing:
         logger.error(f"Missing required environment variables: {missing}")
         raise ValueError(f"Missing required environment variables: {missing}")

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field, validator
 import aio_pika
 import json
 import uuid
+from dotenv import load_dotenv
 
 from dotenv import load_dotenv
 import os
@@ -26,12 +27,22 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+load_dotenv()
+
 # RabbitMQ Configuration
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")
 RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", "5672")
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "admin123")
+
+#PRINT THE RABBITMQ CONFIG FOR DEBUGGING
+# logger.info("###################")
+# logger.info(f"RABBITMQ_HOST={RABBITMQ_HOST}")
+# logger.info(f"RABBITMQ_PORT={RABBITMQ_PORT}")
+# logger.info(f"RABBITMQ_VHOST={RABBITMQ_VHOST}")
+# logger.info(f"RABBITMQ_USER={RABBITMQ_USER}")
+# logger.info("###################")
 
 SUBMISSION_QUEUE = os.getenv("SUBMISSION_QUEUE", "plagiarism_submissions")
 FEEDBACK_QUEUE = os.getenv("FEEDBACK_QUEUE", "plagiarism_feedback")

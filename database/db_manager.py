@@ -67,6 +67,17 @@ class DatabaseManager:
         db_name = os.getenv("POSTGRES_DB") or os.getenv("DB_NAME")
         db_host = os.getenv("POSTGRES_HOST") or os.getenv("DB_HOST", "localhost")
         db_port = int(os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT", "5432"))
+        # db_port = 5435  # TEMP OVERRIDE FOR TESTING
+
+        #print the db connection details for debugging
+        # logger.info("###################")
+        # logger.info(f"DB Host: {db_host}")
+        # logger.info(f"DB Port: {db_port}")
+        # logger.info(f"DB Name: {db_name}")
+        # logger.info(f"DB User: {db_user}")
+        # logger.info(f"DB db_password: {db_password}")
+        # logger.info("###################")
+
 
         if not all([db_user, db_password, db_name]):
             raise ValueError("Missing required database environment variables")

@@ -103,17 +103,38 @@ class RabbitMQClient(MQClient):
                     )
                     logger.info(f"Dead Letter Queue declared: {self.DEAD_LETTER_QUEUE}")
 
-                # Declare main submission queue
-                self.submission_queue = await self.channel.declare_queue(
-                    self.SUBMISSION_QUEUE, durable=True
-                )
-                logger.info(f"Submission queue declared: {self.SUBMISSION_QUEUE}")
+                try:
+                    # First try passive declaration to check if queue exists
+                    self.submission_queue = await self.channel.declare_queue(
+                        self.SUBMISSION_QUEUE, 
+                        durable=True,
+                        passive=True  # Only check, don't create
+                    )
+                    logger.info(f"Submission queue already exists: {self.SUBMISSION_QUEUE}")
+                except Exception:
+                    # Queue doesn't exist, create it
+                    self.submission_queue = await self.channel.declare_queue(
+                        self.SUBMISSION_QUEUE, 
+                        durable=True
+                    )
+                    logger.info(f"Submission queue created: {self.SUBMISSION_QUEUE}")
 
-                # Declare feedback queue for publishing results
-                self.feedback_queue = await self.channel.declare_queue(
-                    self.FEEDBACK_QUEUE, durable=True
-                )
-                logger.info(f"Feedback queue declared: {self.FEEDBACK_QUEUE}")
+                try:
+                    # First try passive declaration to check if queue exists
+                    self.feedback_queue = await self.channel.declare_queue(
+                        self.FEEDBACK_QUEUE, 
+                        durable=True,
+                        passive=True  # Only check, don't create
+                    )
+                    logger.info(f"Feedback queue already exists: {self.FEEDBACK_QUEUE}")
+                except Exception:
+                    # Queue doesn't exist, create it
+                    self.feedback_queue = await self.channel.declare_queue(
+                        self.FEEDBACK_QUEUE, 
+                        durable=True
+                    )
+                    logger.info(f"Feedback queue created: {self.FEEDBACK_QUEUE}")
+
 
                 logger.info(
                     f"Connected to RabbitMQ with prefetch_count={self.PREFETCH_COUNT}, all queues declared"

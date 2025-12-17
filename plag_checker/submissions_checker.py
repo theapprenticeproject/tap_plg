@@ -119,6 +119,8 @@ class SubmissionChecker:
         if self.image_worker is None:
             raise RuntimeError("ImageWorker failed to initialize")
 
+        logger.info("Submission Checker initialized successfully")
+
         await self.start_consumer()
 
     async def process_submission(self, submission):
@@ -282,6 +284,11 @@ class SubmissionChecker:
             data["similarity_score"] = result_text.get("similarity_score")
             data["is_plagiarized"] = result_text.get("is_plagiarized")
             data["match_type"] = result_text.get("match_type")
+            data["assignment_id"] = data.pop("assign_id")
+            data["is_ai_generated"] = result_text.get("is_ai_generated", False)
+            data["ai_detection_source"] = result_text.get("ai_detection_source", "")
+            data["ai_confidence"] = result_text.get("ai_confidence", 0.0)
+            data["plagiarism_source"] = result_text.get("plagiarism_source", "")
 
             publish_data = {k: v for k, v in data.items() if k != "db_record_id"}
 
