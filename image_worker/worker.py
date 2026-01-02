@@ -11,6 +11,7 @@ import asyncio
 from typing import Dict, Optional, Tuple, Any
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+from image_worker.assigment_ref_images import get_reference_images
 
 from config.config import config
 from database.db_manager import DatabaseManager
@@ -291,7 +292,75 @@ class ImageWorker:
         )
         return comparison, prev
 
-    async def check_hash_match(
+    async def check_assignment_reference_hash_match(
+        self, hashes: dict, assignment_id: str
+    ) -> Tuple[bool, Optional[str], Optional[float], Optional[str]]:
+        """
+        Check if submission matches any reference image via perceptual hash comparison.
+
+        Uses three hash types (pHash, dHash, aHash) for robust duplicate detection.
+
+        Args:
+            hashes: Dict containing 'phash', 'dhash', 'ahash' hex strings
+
+        Returns:
+            Tuple of (is_match, reference_id, similarity_score, image_url)
+            - is_match: True if hash match found
+            - reference_id: UUID of matched reference (or None)
+            - similarity_score: 0.0-1.0 similarity score (or None)
+            - image_url: URL of matched reference image (or None)
+
+        Raises:
+            Exception: If database query fails
+        """
+        try:
+
+            references = await get_reference_images(assignment_id, self.clip_handler, self.hash_handler)
+            if not references:
+                return False, None, None, None
+            
+            # for ref_image in references:
+            #     if ref_image["content"] is not None:
+            #         hashes = self.hash_handler.compute_hashes(ref_image["content"])
+            #         ref_image['phash'] = hashes['phash']
+            #         ref_image['dhash'] = hashes['dhash']
+            #         ref_image['ahash'] = hashes['ahash']
+
+            tasks = [self._async_compare_ref(hashes, ref) for ref in references]
+            results = await asyncio.gather(*tasks)
+
+
+            best_match = None
+            best_score = 999
+            best_comparison = None
+            for comparison, ref in results:
+                if comparison["is_match"] and comparison["avg_distance"] < best_score:
+                    best_score = comparison["avg_distance"]
+                    best_match = ref
+                    best_comparison = comparison
+
+            if best_match and best_comparison:
+                print("#"*70)
+                print("Best match found:",best_match["name"])
+                print("#"*70)
+                logger.info("Assignment reference match found")
+                similarity = 1 - (best_score / 64.0)
+                return (
+                    True,
+                    str(best_match["name"]),
+                    similarity,
+                    str(best_match["name"]),
+                )
+            else:
+                logger.info("No assignment reference match found")
+                return False, None, None, None
+
+        except Exception as e:
+            logger.error(f"Hash check failed: {e}", exc_info=True)
+            raise
+
+
+    async def check_db_reference_hash_match(
         self, hashes: dict
     ) -> Tuple[bool, Optional[str], Optional[float], Optional[str]]:
         """
@@ -375,6 +444,11 @@ class ImageWorker:
 
             if not results:
                 return None, 0.0, None
+            
+            print("#"*70)
+            for ref_id, sim, meta in results:
+                print(f"  Ref ID: {ref_id}, Similarity: {sim:.4f}, Meta: {meta}")
+            print("#"*70)
 
             matches = [
                 (ref_id, sim, meta)
@@ -540,7 +614,8 @@ class ImageWorker:
                 student_id,
                 self_result.get("first_submission_date_for_image", None),
             )
-            hash_check_result = await self.check_hash_match(hashes)
+            # hash_check_result = await self.check_db_reference_hash_match(hashes)
+            hash_check_result = await self.check_assignment_reference_hash_match(hashes,assign_id)
 
             (
                 hash_match,
@@ -1020,6 +1095,9 @@ class ImageWorker:
             "student_id": student_id,
             "assignment_id": assign_id,
             "image_url": image_url,
+            "is_ai_generated": False,
+            "ai_detection_source": "None",
+            "ai_confidence": 0.0,
             "is_plagiarized": True,
             "similarity_score": 1.0,
             "match_type": "stock_image",
@@ -1290,8 +1368,9 @@ class ImageWorker:
                 )
                 message["ai_confidence"] = plagiarism_status.get("ai_confidence", 0.0)
 
-            payload_preview = json.dumps(message, indent=2)[:2000]
-            logger.info(f"Result payload preview (2000 chars):\n{payload_preview}...")
+            # payload_preview = json.dumps(message, indent=2)[:2000]
+            # logger.info(f"Result payload preview (2000 chars):\n{payload_preview}...")
+            
 
             return json.dumps(message)
 

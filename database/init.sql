@@ -72,12 +72,12 @@ USING hnsw (clip_embedding vector_ip_ops);
 -- Reference images corpus
 CREATE TABLE IF NOT EXISTS reference_images (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    reference_id VARCHAR(100) UNIQUE NOT NULL,
+    reference_id VARCHAR(200) UNIQUE NOT NULL, -- will be used as assignment id when fetching references from assignments
     image_path TEXT NOT NULL,
     phash VARCHAR(64) NOT NULL,
     dhash VARCHAR(64) NOT NULL,
     ahash VARCHAR(64) NOT NULL,
-    category VARCHAR(100),
+    category VARCHAR(200),
     description TEXT,
     source VARCHAR(200),
     faiss_index_position INTEGER,

@@ -93,7 +93,7 @@ class DetectionConfig(BaseSettings):
 
     exact_dup_threshold: float = Field(default=0.95, env="EXACT_DUPLICATE_THRESHOLD")
     near_dup_threshold: float = Field(default=0.90, env="NEAR_DUPLICATE_THRESHOLD")
-    semantic_threshold: float = Field(default=0.80, env="SEMANTIC_MATCH_THRESHOLD")
+    semantic_threshold: float = Field(default=0.70, env="SEMANTIC_MATCH_THRESHOLD")
 
     # Hash matching thresholds (Hamming distance, 0-64 bits)
     hash_threshold: int = Field(default=8, env="HASH_MATCH_THRESHOLD")

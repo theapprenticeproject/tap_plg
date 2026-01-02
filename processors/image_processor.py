@@ -65,6 +65,9 @@ class ImageProcessor(BaseProcessor):
                     )
                     return {"error": "Invalid JSON response from worker"}
 
+            logger.info("Result payload ")
+            logger.info(json.dumps(result, indent=2))
+
             logger.info(
                 f"Successfully processed submission: {data.get('submission_id')}"
             )
