@@ -2,38 +2,79 @@ version: '3.8'
 
 services:
   # ===================================
+  # POSTGRESQL - Database
+  # ===================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: plg-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+      POSTGRES_MAX_CONNECTIONS: 20
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    networks:
+      - plg-network
+    restart: unless-stopped
+
+  # ===================================
   # PLAGIARISM CHECKER SERVICE
   # ===================================
   plagiarism-checker:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: mentorme-plagiarism-checker
+    container_name: plg-checker
     env_file:
       - .env
     volumes:
       - ./data:/app/data
       - ./logs:/app/logs
     depends_on:
-      rabbitmq:
-        condition: service_healthy
       postgres:
         condition: service_healthy
     deploy:
       resources:
         limits:
-          cpus: '1.0'
-          memory: 4G
+          cpus: '8.0'  # Increased from 4.0 - allows up to 8 CPU cores
+          memory: 8G
         reservations:
-          cpus: '0.5'
+          cpus: '2'    # Increased from 1 - guarantees 2 cores minimum
           memory: 2G
     restart: unless-stopped
     networks:
-      - mentorme-plagiarism-network
+      - plg-network
+
+# ===================================
+# VOLUMES
+# ===================================
+volumes:
+  postgres_data:
+    driver: local
 
 # ===================================
 # NETWORKS
 # ===================================
 networks:
-  mentorme-plagiarism-network:
+  plg-network:
     driver: bridge
