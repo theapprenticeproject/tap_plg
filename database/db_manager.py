@@ -514,7 +514,7 @@ class DatabaseManager:
             raise RuntimeError("Database pool not initialized")
 
         try:
-            image_path = await self._fetch(
+            image_path = await self._fetchval(
                 """
                     SELECT image_path 
                     FROM reference_images where reference_id = $1;
