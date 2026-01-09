@@ -102,6 +102,11 @@ class RabbitMQClient(MQClient):
                         self.DEAD_LETTER_QUEUE, durable=True
                     )
                     logger.info(f"Dead Letter Queue declared: {self.DEAD_LETTER_QUEUE}")
+                self.submission_queue = await self.channel.declare_queue(
+                        self.SUBMISSION_QUEUE, 
+                        durable=True
+                    )
+                logger.info(f"Submission queue created: {self.SUBMISSION_QUEUE}")
 
                 try:
                     # First try passive declaration to check if queue exists

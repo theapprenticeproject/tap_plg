@@ -4,12 +4,12 @@
 
 set -e
 FULL_SETUP=0
-START_API=0
+START_API=1
 COMPOSE_FILE="docker-compose-prod.yml"
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
-        --full-setup) FULL_SETUP=1; shift ;;
+        --full-setup) FULpodmanL_SETUP=1; shift ;;
         --with-api) START_API=1; shift ;;
         --prod) COMPOSE_FILE="docker-compose-prod.yml"; shift ;;
         --dev) COMPOSE_FILE="docker-compose-dev.yml"; shift ;;
@@ -363,7 +363,6 @@ main() {
     stop_existing_containers
     start_containers
     wait_for_postgres
-    wait_for_rabbitmq
     wait_for_api
     initialize_database
     show_summary

@@ -69,14 +69,6 @@ class DatabaseManager:
         db_port = int(os.getenv("POSTGRES_PORT") or os.getenv("DB_PORT", "5432"))
         # db_port = 5435  # TEMP OVERRIDE FOR TESTING
 
-        #print the db connection details for debugging
-        # logger.info("###################")
-        # logger.info(f"DB Host: {db_host}")
-        # logger.info(f"DB Port: {db_port}")
-        # logger.info(f"DB Name: {db_name}")
-        # logger.info(f"DB User: {db_user}")
-        # logger.info(f"DB db_password: {db_password}")
-        # logger.info("###################")
 
 
         if not all([db_user, db_password, db_name]):
@@ -525,7 +517,7 @@ class DatabaseManager:
             image_path = await self._fetch(
                 """
                     SELECT image_path 
-                    FROM reference_images where id = $1;
+                    FROM reference_images where reference_id = $1;
                     """,
                 reference_id,
             )

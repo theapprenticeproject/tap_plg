@@ -16,6 +16,7 @@ build/
 # Environment variables
 .env
 .env.local
+.env.prod
 
 # Logs
 logs/

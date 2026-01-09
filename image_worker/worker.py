@@ -340,9 +340,6 @@ class ImageWorker:
                     best_comparison = comparison
 
             if best_match and best_comparison:
-                print("#"*70)
-                print("Best match found:",best_match["name"])
-                print("#"*70)
                 logger.info("Assignment reference match found")
                 similarity = 1 - (best_score / 64.0)
                 return (
@@ -445,10 +442,10 @@ class ImageWorker:
             if not results:
                 return None, 0.0, None
             
-            print("#"*70)
-            for ref_id, sim, meta in results:
-                print(f"  Ref ID: {ref_id}, Similarity: {sim:.4f}, Meta: {meta}")
-            print("#"*70)
+            # print("#"*70)
+            # for ref_id, sim, meta in results:
+            #     print(f"  Ref ID: {ref_id}, Similarity: {sim:.4f}, Meta: {meta}")
+            # print("#"*70)
 
             matches = [
                 (ref_id, sim, meta)

@@ -65,6 +65,35 @@ services:
     networks:
       - plg-network
 
+  # ===================================
+  # API SERVICE
+  # ===================================
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: plg-api
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          cpus: '8.0'  # Increased from 4.0 - allows up to 8 CPU cores
+          memory: 8G
+        reservations:
+          cpus: '2'    # Increased from 1 - guarantees 2 cores minimum
+          memory: 2G
+    restart: unless-stopped
+    networks:
+      - plg-network
+
+
 # ===================================
 # VOLUMES
 # ===================================
