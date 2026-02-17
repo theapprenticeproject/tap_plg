@@ -356,7 +356,6 @@ class ImageWorker:
             logger.error(f"Hash check failed: {e}", exc_info=True)
             raise
 
-
     async def check_db_reference_hash_match(
         self, hashes: dict
     ) -> Tuple[bool, Optional[str], Optional[float], Optional[str]]:
@@ -550,9 +549,23 @@ class ImageWorker:
 
         try:
             extracted = self._validate_input(data)
-            submission_id, student_id, assign_id, image_url, db_record_id = extracted
+            submission_id, student_id, assign_id, submission_url, db_record_id = extracted
 
             logger.info(f"Processing submission: {submission_id}")
+
+            # Check for video URLs before attempting to download
+            media_type = self.image_validator.detect_media_type(submission_url)
+            if media_type == "video":
+                logger.warning(
+                    f"Video URL rejected: submission={submission_id}, url={submission_url}"
+                )
+                video_result = self._create_video_url_result(
+                    submission_id, student_id, assign_id, submission_url
+                )
+                processing_time_ms = int((time.time() - start_time) * 1000)
+                return json.dumps(video_result)
+            else:
+                image_url = submission_url
 
             # Check for stock image URLs before downloading
             is_stock, stock_site = self.image_validator.check_stock_image_url(image_url)
@@ -1100,6 +1113,29 @@ class ImageWorker:
             "match_type": "stock_image",
             "plagiarism_source": f"stock_image_{stock_site}",
             "similar_sources": [{"source": stock_site, "url": image_url}],
+        }
+    
+    def _create_video_url_result(
+        self,
+        submission_id: str,
+        student_id: str,
+        assign_id: str,
+        submission_url: str
+    ) -> dict:
+        """Create video URL detection result dictionary."""
+        return {
+            "submission_id": submission_id,
+            "student_id": student_id,
+            "assignment_id": assign_id,
+            "image_url": submission_url,
+            "is_ai_generated": False,
+            "ai_detection_source": "None",
+            "ai_confidence": 0.0,
+            "is_plagiarized": False,
+            "similarity_score": 1.0,
+            "match_type": "original",
+            "plagiarism_source": None,
+            "similar_sources": None,
         }
 
     async def _build_reference_result(

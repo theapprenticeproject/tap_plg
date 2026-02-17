@@ -53,6 +53,26 @@ class ImageValidator:
         "vecteezy",
     ]
 
+
+    IMAGE_EXTENSIONS = {
+        "jpg",
+        "jpeg",
+        "png",
+        "gif",
+        "webp",
+        "bmp",
+        "tiff",
+        "heic",
+    }
+    VIDEO_EXTENSIONS = {
+        "mp4",
+        "mov",
+        "webm",
+        "mkv",
+        "avi",
+        "mpeg",
+        "mpg",
+    }
     def __init__(
         self,
         min_variance_threshold: float = 5.0,
@@ -70,6 +90,24 @@ class ImageValidator:
         self.min_variance_threshold = min_variance_threshold
         self.min_unique_colors = min_unique_colors
         self.max_solid_color_ratio = max_solid_color_ratio
+
+
+    def detect_media_type(self, submission_url: str) -> str:
+        """Detect media type based on URL/extension."""
+        if not submission_url:
+            return "image"
+
+        url_without_query = submission_url.split("?", 1)[0].lower()
+        if "." in url_without_query:
+            ext = url_without_query.rsplit(".", 1)[-1]
+            if ext in self.IMAGE_EXTENSIONS:
+                return "image"
+            if ext in self.VIDEO_EXTENSIONS:
+                return "video"
+
+        if "video" in url_without_query:
+            return "video"
+        return "image"
 
     def check_stock_image_url(self, image_url: str) -> Tuple[bool, Optional[str]]:
         """
