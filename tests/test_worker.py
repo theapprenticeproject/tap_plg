@@ -45,7 +45,7 @@ def sample_submission_data():
         "submission_id": "SUB-TEST-001",
         "student_id": "ST-TEST-001",
         "assign_id": "A-TEST-001",
-        "img_url": "https://example.com/test.png",
+        "submission_url": "https://example.com/test.png",
         "db_record_id": 1,
     }
 
@@ -222,7 +222,7 @@ class TestWorkerSubmissionProcessing:
             "submission_id": "SUB-002",
             "student_id": "ST002",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 2,
         }
 
@@ -251,7 +251,7 @@ class TestWorkerSubmissionProcessing:
             "submission_id": "SUB-003",
             "student_id": "ST003",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 3,
         }
 
@@ -274,7 +274,7 @@ class TestWorkerHashDetection:
             "submission_id": "SUB-004",
             "student_id": "ST004",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 4,
         }
 
@@ -298,7 +298,7 @@ class TestWorkerSemanticDetection:
             "submission_id": "SUB-005",
             "student_id": "ST005",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 5,
         }
 
@@ -321,7 +321,7 @@ class TestWorkerAIDetection:
             "submission_id": "SUB-006",
             "student_id": "ST006",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 6,
         }
 
@@ -344,7 +344,7 @@ class TestWorkerImageValidation:
             "submission_id": "SUB-007",
             "student_id": "ST007",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 7,
         }
 

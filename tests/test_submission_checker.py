@@ -163,7 +163,7 @@ class TestSubmissionChecker:
     async def test_get_processor_for_image(self, submission_checker):
         """Test getting processor for image submission."""
         submission_checker.image_processor = MagicMock()
-        data = {"img_url": "https://example.com/image.jpg"}
+        data = {"submission_type": "image", "submission_url": "https://example.com/image.jpg"}
 
         processor = submission_checker.get_processor(data)
 
@@ -172,16 +172,15 @@ class TestSubmissionChecker:
     @pytest.mark.asyncio
     async def test_get_processor_for_text(self, submission_checker):
         """Test getting processor for text submission."""
-        data = {"text": "Some text content"}
+        data = {"submission_type": "text", "submission_text": "Some text content"}
 
-        processor = submission_checker.get_processor(data)
-
-        assert processor is submission_checker.text_processor
+        with pytest.raises(ValueError, match="Unsupported submission_type"):
+            submission_checker.get_processor(data)
 
     @pytest.mark.asyncio
     async def test_get_processor_invalid_format(self, submission_checker):
         """Test getting processor with invalid format raises error."""
-        data = {"submission_id": "SUB-001"}  # No img_url or text
+        data = {"submission_id": "SUB-001"}  # No submission_type or submission_url
 
         with pytest.raises(ValueError, match="Invalid submission format"):
             submission_checker.get_processor(data)
@@ -190,7 +189,7 @@ class TestSubmissionChecker:
     async def test_get_processor_not_initialized(self, submission_checker):
         """Test getting processor when not initialized raises error."""
         submission_checker.image_processor = None
-        data = {"img_url": "https://example.com/image.jpg"}
+        data = {"submission_type": "image", "submission_url": "https://example.com/image.jpg"}
 
         with pytest.raises(RuntimeError, match="not initialized"):
             submission_checker.get_processor(data)
@@ -216,7 +215,8 @@ class TestSubmissionChecker:
                 "submission_id": "SUB-001",
                 "student_id": "ST001",
                 "assign_id": "A001",
-                "img_url": "https://example.com/image.jpg",
+                "submission_type": "image",
+                "submission_url": "https://example.com/image.jpg",
             }
         ).encode()
         mock_message.ack = AsyncMock()
@@ -233,23 +233,57 @@ class TestSubmissionChecker:
         submission_checker.client.publish_message.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_process_submission_no_image_url(
+    async def test_process_submission_non_image_skips_plagiarism(
         self, submission_checker, mock_db_manager
     ):
-        """Test processing submission without image URL."""
+        """Test non-image submissions skip plagiarism and are published as original."""
+        submission_checker.image_processor = MagicMock()
+
         mock_message = MagicMock()
         mock_message.body = json.dumps(
-            {"submission_id": "SUB-002", "student_id": "ST002"}
+            {
+                "submission_id": "SUB-006",
+                "student_id": "ST006",
+                "assign_id": "A006",
+                "submission_type": "text",
+                "submission_text": "Hello WHO ARE YOU?",
+            }
         ).encode()
+        mock_message.ack = AsyncMock()
+        mock_message.redelivered = False
+        mock_message.headers = {"x-delivery-count": 0}
+
+        await submission_checker.process_submission(mock_message)
+
+        submission_checker.image_processor.process.assert_not_called()
+        mock_db_manager.update_result.assert_called_once()
+        submission_checker.client.publish_message.assert_called_once()
+        mock_message.ack.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_process_submission_text_submission_without_url(
+        self, submission_checker, mock_db_manager
+    ):
+        """Test processing a text submission without submission_url."""
+        mock_message = MagicMock()
+        mock_message.body = json.dumps(
+            {
+                "submission_id": "SUB-002",
+                "student_id": "ST002",
+                "assign_id": "A002",
+                "submission_type": "text",
+                "submission_text": "Hello",
+            }
+        ).encode()
+        mock_message.ack = AsyncMock()
         mock_message.nack = AsyncMock()
         mock_message.redelivered = False
         mock_message.headers = {}
 
         await submission_checker.process_submission(mock_message)
 
-        mock_db_manager.update_status.assert_called()
-
-        mock_message.nack.assert_called_once_with(requeue=False)
+        mock_db_manager.update_result.assert_called_once()
+        mock_message.ack.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_process_submission_invalid_json(self, submission_checker):
@@ -257,11 +291,13 @@ class TestSubmissionChecker:
         mock_message = MagicMock()
         mock_message.body = b"invalid json {{"
         mock_message.nack = AsyncMock()
+        mock_message.redelivered = False
+        mock_message.headers = {}
 
         await submission_checker.process_submission(mock_message)
 
         # Should nack without requeue
-        mock_message.nack.assert_called_once_with(requeue=False)
+        mock_message.nack.assert_called_once_with(requeue=False, submission_id="unknown")
 
     @pytest.mark.asyncio
     async def test_process_submission_retry_logic(
@@ -280,16 +316,18 @@ class TestSubmissionChecker:
         mock_message.body = json.dumps(
             {
                 "submission_id": "SUB-003",
-                "img_url": "https://example.com/image.jpg",
+                "submission_type": "image",
+                "submission_url": "https://example.com/image.jpg",
             }
         ).encode()
         mock_message.nack = AsyncMock()
         mock_message.redelivered = False
+        mock_message.headers = {}
 
         await submission_checker.process_submission(mock_message)
 
         # Should nack with requeue (retry)
-        mock_message.nack.assert_called_once_with(requeue=True)
+        mock_message.nack.assert_called_once_with(requeue=True, submission_id="SUB-003")
 
         # Should update status with retry count
         mock_db_manager.update_status.assert_called()
@@ -311,7 +349,8 @@ class TestSubmissionChecker:
         mock_message.body = json.dumps(
             {
                 "submission_id": "SUB-004",
-                "img_url": "https://example.com/image.jpg",
+                "submission_type": "image",
+                "submission_url": "https://example.com/image.jpg",
             }
         ).encode()
         mock_message.nack = AsyncMock()
@@ -322,7 +361,7 @@ class TestSubmissionChecker:
 
         submission_checker.client.publish_to_dlq.assert_called_once()
 
-        mock_message.nack.assert_called_once_with(requeue=False)
+        mock_message.nack.assert_called_once_with(requeue=False, submission_id="SUB-004")
 
     @pytest.mark.asyncio
     async def test_process_submission_poison_message(
@@ -333,7 +372,7 @@ class TestSubmissionChecker:
 
         mock_message = MagicMock()
         mock_message.body = json.dumps(
-            {"submission_id": "SUB-005", "img_url": "http://example.com"}
+            {"submission_id": "SUB-005", "submission_type": "image", "submission_url": "http://example.com"}
         ).encode()
         mock_message.headers = {"x-delivery-count": 5}
         mock_message.redelivered = True
@@ -343,7 +382,7 @@ class TestSubmissionChecker:
 
         # Should detect poison message and publish to DLQ
         submission_checker.client.publish_to_dlq.assert_called_once()
-        mock_message.nack.assert_called_once_with(requeue=False)
+        mock_message.nack.assert_called_once_with(requeue=False, submission_id="SUB-005")
 
     @pytest.mark.asyncio
     async def test_close_owns_resources(

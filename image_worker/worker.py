@@ -228,7 +228,7 @@ class ImageWorker:
         Raises:
             ValidationError: If required fields are missing or invalid
         """
-        required_fields = ["submission_id", "student_id", "img_url", "db_record_id"]
+        required_fields = ["submission_id", "student_id", "submission_url", "db_record_id"]
         for field in required_fields:
             if field not in data or not data[field]:
                 raise ValidationError(
@@ -239,7 +239,7 @@ class ImageWorker:
         submission_id = data["submission_id"]
         student_id = data["student_id"]
         assign_id = data.get("assign_id", "N/A")
-        image_url = data["img_url"]
+        image_url = data["submission_url"]
         db_record_id = data["db_record_id"]
 
         return submission_id, student_id, assign_id, image_url, db_record_id

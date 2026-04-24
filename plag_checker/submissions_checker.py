@@ -6,7 +6,6 @@ from plag_checker.submission_status import SubmissionStatus
 from mq.mq_client import MQClient
 from database.db_manager import DatabaseManager
 from processors.image_processor import ImageProcessor
-from processors.text_processor import TextProcessor
 
 from typing import TYPE_CHECKING
 
@@ -92,7 +91,6 @@ class SubmissionChecker:
         self._owns_image_worker = image_worker is None
 
         self.image_processor = None  # Will be set after image_worker initialization
-        self.text_processor = TextProcessor()
 
         self.STARTUP_RETRY_DELAY = startup_retry_delay
         self.MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
@@ -159,7 +157,13 @@ class SubmissionChecker:
             redelivered = getattr(submission, "redelivered", False)
             delivery_count = 0
 
-            if hasattr(submission, "headers") and submission.headers:
+            from collections.abc import Mapping
+
+            if (
+                hasattr(submission, "headers")
+                and isinstance(submission.headers, Mapping)
+                and submission.headers
+            ):
                 delivery_count = submission.headers.get("x-delivery-count", 0)
 
             if redelivered and delivery_count == 0:
@@ -186,28 +190,29 @@ class SubmissionChecker:
                         f"Failed to send poison message to DLQ for submission {submission_id}"
                     )
 
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )
+                await submission.nack(requeue=False, submission_id=submission_id)
                 message_acked = True
                 return
 
-            image_url = data.get("img_url") or data.get("image_url")
+            submission_url = data.get("submission_url")
+            submission_type = data.get("submission_type")
 
             record_id = await self.db.insert_submission_if_not_exists(
-                data, image_url or "", status
+                data, submission_url or "", status
             )
-            if not image_url:
-                logger.error(f"No image URL in submission {submission_id}")
+            if submission_type != "image":
+                logger.info(
+                    f"Skipping plagiarism processing for non-image submission {submission_id}"
+                )
+            elif not submission_url:
+                logger.error(f"No submission_url in image submission {submission_id}")
                 await self.db.update_status(
                     submission_id,
                     SubmissionStatus.FAILED,
                     0,
-                    "No image URL in submission",
+                    "No submission_url in image submission",
                 )
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )
+                await submission.nack(requeue=False, submission_id=submission_id)
                 message_acked = True
                 return
 
@@ -217,41 +222,33 @@ class SubmissionChecker:
 
             data["db_record_id"] = str(record_id)  # Convert UUID to string
 
-            # Get processor and validate initialization
-            try:
-                processor = self.get_processor(data)
-            except RuntimeError as init_error:
-                # Processor not initialized - this is a system error, should retry
-                logger.error(f"System not ready: {init_error}")
-                await self.db.update_status(
-                    submission_id,
-                    SubmissionStatus.FAILED,
-                    0,
-                    f"System initialization error: {str(init_error)}",
-                )
-                await submission.nack(
-                    submission, requeue=True, submission_id=submission_id
-                )  # Retry - system might be initializing
-                message_acked = True
-                return
-            except ValueError as validation_error:
-                # Invalid message format - should not retry
-                logger.error(
-                    f"Invalid message format for submission {submission_id}: {validation_error}"
-                )
-                await self.db.update_status(
-                    submission_id,
-                    SubmissionStatus.FAILED,
-                    0,
-                    f"Invalid message format: {str(validation_error)}",
-                )
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )  # Don't retry invalid format
-                message_acked = True
-                return
-
-            result_text = await processor.process(data)
+            submission_type = data.get("submission_type")
+            if submission_type == "image":
+                try:
+                    processor = self.get_processor(data)
+                except RuntimeError as init_error:
+                    logger.error(f"System not ready: {init_error}")
+                    await self.db.update_status(
+                        submission_id,
+                        SubmissionStatus.FAILED,
+                        0,
+                        f"System initialization error: {str(init_error)}",
+                    )
+                    await submission.nack(requeue=True, submission_id=submission_id)
+                    message_acked = True
+                    return
+                result_text = await processor.process(data)
+            else:
+                result_text = {
+                    "similar_sources": [],
+                    "similarity_score": 0.0,
+                    "is_plagiarized": False,
+                    "match_type": "original",
+                    "is_ai_generated": False,
+                    "ai_detection_source": "",
+                    "ai_confidence": 0.0,
+                    "plagiarism_source": "",
+                }
 
             try:
                 if isinstance(result_text, (str, bytes, bytearray)):
@@ -308,9 +305,7 @@ class SubmissionChecker:
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e}")
-            await submission.nack(
-                submission, requeue=False, submission_id=submission_id
-            )
+            await submission.nack(requeue=False, submission_id=submission_id)
             message_acked = True
 
         except RuntimeError as e:
@@ -341,9 +336,7 @@ class SubmissionChecker:
                         rc + 1,
                         f"Retry {rc + 1}/{self.MAX_RETRIES}: {str(e)[:200]}",
                     )
-                    await submission.nack(
-                        submission, requeue=True, submission_id=submission_id
-                    )
+                    await submission.nack(requeue=True, submission_id=submission_id)
                     message_acked = True
                 else:
                     await self.db.update_status(
@@ -362,9 +355,7 @@ class SubmissionChecker:
                             f"Failed to send max-retry message to DLQ for submission {submission_id}"
                         )
 
-                    await submission.nack(
-                        submission, requeue=False, submission_id=submission_id
-                    )
+                    await submission.nack(requeue=False, submission_id=submission_id)
                     message_acked = True
                     logger.warning(
                         f"Message discarded after {rc} retries and sent to DLQ"
@@ -392,18 +383,18 @@ class SubmissionChecker:
             RuntimeError: If processor is not initialized
             ValueError: If data format is invalid
         """
-        if data.get("img_url"):
+        submission_type = data.get("submission_type")
+        if submission_type == "image":
             if self.image_processor is None:
                 raise RuntimeError(
                     "ImageProcessor not initialized - initialize() must be called before processing messages"
                 )
             return self.image_processor
-        elif data.get("text"):
-            return self.text_processor
-        else:
-            raise ValueError(
-                "Invalid submission format: missing both 'img_url' and 'text' fields"
-            )
+        if submission_type is None:
+            raise ValueError("Invalid submission format: missing submission_type")
+        raise ValueError(
+            f"Unsupported submission_type for processing: {data.get('submission_type')}"
+        )
 
     async def start_consumer(self):
         await self.client.start_consumer(self.process_submission)

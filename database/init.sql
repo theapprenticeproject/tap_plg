@@ -1,7 +1,5 @@
 -- UUID support
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-
--- pgvector extension for vector similarity search (only needed if USE_PGVECTOR=true)
 CREATE EXTENSION IF NOT EXISTS vector;
 
 -- Drop existing tables if doing a clean restore (commented by default)
@@ -16,7 +14,9 @@ CREATE TABLE IF NOT EXISTS submissions (
     submission_id VARCHAR(100) UNIQUE NOT NULL,
     assign_id VARCHAR(200),
     student_id VARCHAR(64) NOT NULL,  -- SHA-256 hashed
-    image_url TEXT,
+    submission_url TEXT,
+    submission_type VARCHAR(20),
+    submission_text TEXT,
     status integer DEFAULT 0,
     retry_count integer DEFAULT 0,
     result jsonb,

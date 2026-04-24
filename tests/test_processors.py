@@ -1,5 +1,5 @@
 """
-Unit tests for image_processor and text_processor.
+Unit tests for ImageProcessor.
 """
 
 import pytest
@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import json
 
 from processors.image_processor import ImageProcessor
-from processors.text_processor import TextProcessor
 
 
 class TestImageProcessor:
@@ -60,15 +59,15 @@ class TestImageProcessor:
 
         result = await image_processor.process(data)
 
-        assert result == {"error": "No image URL provided"}
+        assert result == {"error": "No submission_url provided"}
 
     @pytest.mark.asyncio
-    async def test_process_with_img_url(self, image_processor, mock_image_worker):
-        """Test processing submission with img_url."""
+    async def test_process_with_submission_url(self, image_processor, mock_image_worker):
+        """Test processing submission with submission_url."""
         data = {
             "submission_id": "SUB-001",
             "student_id": "ST001",
-            "img_url": "https://example.com/image.jpg",
+            "submission_url": "https://example.com/image.jpg",
         }
 
         expected_result = {
@@ -89,7 +88,7 @@ class TestImageProcessor:
         data = {
             "submission_id": "SUB-002",
             "student_id": "ST002",
-            "image_url": "https://example.com/photo.png",
+            "submission_url": "https://example.com/photo.png",
         }
 
         expected_result = {
@@ -111,7 +110,7 @@ class TestImageProcessor:
         """Test when worker returns None."""
         data = {
             "submission_id": "SUB-003",
-            "img_url": "https://example.com/image.jpg",
+            "submission_url": "https://example.com/image.jpg",
         }
 
         mock_image_worker.process_submission.return_value = None
@@ -127,7 +126,7 @@ class TestImageProcessor:
         """Test when worker returns JSON string."""
         data = {
             "submission_id": "SUB-004",
-            "img_url": "https://example.com/image.jpg",
+            "submission_url": "https://example.com/image.jpg",
         }
 
         expected_result = {
@@ -148,7 +147,7 @@ class TestImageProcessor:
         """Test when worker returns invalid JSON string."""
         data = {
             "submission_id": "SUB-005",
-            "img_url": "https://example.com/image.jpg",
+            "submission_url": "https://example.com/image.jpg",
         }
 
         mock_image_worker.process_submission.return_value = "not valid json {{"
@@ -165,7 +164,7 @@ class TestImageProcessor:
         """Test when worker raises exception."""
         data = {
             "submission_id": "SUB-006",
-            "img_url": "https://example.com/image.jpg",
+            "submission_url": "https://example.com/image.jpg",
         }
 
         mock_image_worker.process_submission.side_effect = RuntimeError(
@@ -186,7 +185,7 @@ class TestImageProcessor:
         submissions = [
             {
                 "submission_id": f"SUB-{i}",
-                "img_url": f"https://example.com/image{i}.jpg",
+                "submission_url": f"https://example.com/image{i}.jpg",
             }
             for i in range(3)
         ]
@@ -205,68 +204,3 @@ class TestImageProcessor:
         assert results[1]["similarity_score"] == 0.6
         assert results[2]["similarity_score"] == 0.7
 
-
-class TestTextProcessor:
-    """Test cases for TextProcessor."""
-
-    @pytest.fixture
-    def text_processor(self):
-        """Create TextProcessor instance."""
-        return TextProcessor()
-
-    @pytest.mark.asyncio
-    async def test_process_text_submission(self, text_processor):
-        """Test processing text submission."""
-        data = {
-            "submission_id": "TEXT-001",
-            "student_id": "ST001",
-            "payload": "This is some text to check for plagiarism.",
-        }
-
-        result = await text_processor.process(data)
-
-        assert "similarity_score" in result
-        assert "matched_sources" in result
-        assert isinstance(result["similarity_score"], (int, float))
-        assert isinstance(result["matched_sources"], list)
-
-    @pytest.mark.asyncio
-    async def test_process_empty_text(self, text_processor):
-        """Test processing empty text."""
-        data = {"submission_id": "TEXT-002", "payload": ""}
-
-        result = await text_processor.process(data)
-
-        assert "similarity_score" in result
-        assert "matched_sources" in result
-
-    @pytest.mark.asyncio
-    async def test_process_missing_payload(self, text_processor):
-        """Test processing submission without payload field."""
-        data = {"submission_id": "TEXT-003"}
-
-        result = await text_processor.process(data)
-
-        # Should handle missing payload gracefully
-        assert "similarity_score" in result
-        assert "matched_sources" in result
-
-    @pytest.mark.asyncio
-    async def test_process_returns_expected_format(self, text_processor):
-        """Test that result has expected format."""
-        data = {"payload": "Sample text"}
-
-        result = await text_processor.process(data)
-
-        # Verify structure
-        assert isinstance(result, dict)
-        assert "similarity_score" in result
-        assert "matched_sources" in result
-
-        # Verify types
-        assert isinstance(result["similarity_score"], (int, float))
-        assert isinstance(result["matched_sources"], list)
-
-        # Verify reasonable values (based on dummy implementation)
-        assert 0 <= result["similarity_score"] <= 100
-        assert all(isinstance(source, str) for source in result["matched_sources"])

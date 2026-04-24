@@ -29,7 +29,7 @@ class ImageProcessor(BaseProcessor):
 
         Args:
             data: dict containing:
-                - img_url or image_url: URL of the image to process
+                - submission_url: URL of the image to process
                 - submission_id: unique submission identifier
                 - student_id: hashed student identifier
                 - assign_id: assignment identifier
@@ -38,11 +38,11 @@ class ImageProcessor(BaseProcessor):
         Returns:
             dict with plagiarism detection results or error message
         """
-        image_url = data.get("img_url") or data.get("image_url")
+        submission_url = data.get("submission_url")
 
-        if not image_url:
-            logger.error("No image URL provided in submission data")
-            return {"error": "No image URL provided"}
+        if not submission_url:
+            logger.error("No submission_url provided in submission data")
+            return {"error": "No submission_url provided"}
 
         try:
             logger.info(f"Processing image submission: {data.get('submission_id')}")

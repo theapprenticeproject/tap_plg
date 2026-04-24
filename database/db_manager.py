@@ -27,7 +27,7 @@ class DatabaseManager:
         await db.init_pool()
         try:
             # Use database operations
-            await db.insert_submission_if_not_exists(data, image_url)
+            await db.insert_submission_if_not_exists(data, submission_url)
         finally:
             await db.close()
     """
@@ -165,7 +165,7 @@ class DatabaseManager:
         return str(normalized)
 
     async def insert_submission_if_not_exists(
-        self, submission_data: dict, image_url: str, status: int
+        self, submission_data: dict, submission_url: Optional[str], status: int
     ):
         """
         Insert a new submission if it doesn't already exist.
@@ -173,8 +173,8 @@ class DatabaseManager:
         Uses INSERT ... ON CONFLICT for atomic upsert operation to prevent race conditions.
 
         Args:
-            submission_data: Dict containing submission_id, student_id, assign_id, img_url
-            image_url: URL of the submitted image
+            submission_data: Dict containing submission_id, student_id, assign_id, submission_url, submission_type, submission_text
+            submission_url: URL of the submitted content
             status: Initial submission status
 
         Returns:
@@ -193,8 +193,8 @@ class DatabaseManager:
 
         try:
             insert_sql = """
-                INSERT INTO submissions (submission_id, student_id, assign_id, image_url, status)
-                VALUES ($1, $2, $3, $4, $5)
+                INSERT INTO submissions (submission_id, student_id, assign_id, submission_url, submission_type, submission_text, status)
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (submission_id) DO NOTHING
                 RETURNING id;
                 """
@@ -206,7 +206,9 @@ class DatabaseManager:
                         submission_id,
                         submission_data.get("student_id"),
                         submission_data.get("assign_id"),
-                        submission_data.get("img_url") or image_url,
+                            submission_data.get("submission_url") or submission_url,
+                        submission_data.get("submission_type"),
+                        submission_data.get("submission_text"),
                         status,
                     )
 
@@ -251,8 +253,10 @@ class DatabaseManager:
             await self._execute(
                 """
                 UPDATE submissions
-                SET result = $1, status = $2, updated_at = NOW() 
-                 WHERE submission_id = $3;
+                SET result = $1,
+                    status = $2,
+                    updated_at = NOW()
+                WHERE submission_id = $3;
                 """,
                 json.dumps(result),
                 status_val,
@@ -271,13 +275,13 @@ class DatabaseManager:
         message_value: str,
     ):
         """
-        Update submission status.
-
-        Valid status values: RECEIVED, PROCESSING, PROCESSED, PENDING_FEEDBACK_PUSH, COMPLETED, FAILED
+        Update submission status and retry metadata.
 
         Args:
             submission_id: Unique submission identifier
-            status_value: New status value
+            status_value: New status code
+            retry_count_value: Retry counter value
+            message_value: Human-readable status message
 
         Raises:
             asyncpg.PostgresError: If update fails
@@ -290,13 +294,15 @@ class DatabaseManager:
             result = await self._execute(
                 """
                 UPDATE submissions
-                SET status = $1, message = $2, retry_count = $3, updated_at = $4
-                WHERE submission_id = $5;
+                SET status = $1,
+                    retry_count = $2,
+                    message = $3,
+                    updated_at = NOW()
+                WHERE submission_id = $4;
                 """,
                 status_value,
-                message_value,
                 retry_count_value,
-                datetime.utcnow(),
+                message_value,
                 submission_id,
             )
             if result == "UPDATE 0":
@@ -568,7 +574,7 @@ class DatabaseManager:
                 # This prevents flagging the original submitter as a plagiarist
                 records = await self._fetch(
                     """
-                        SELECT id, student_id, assign_id,image_url, phash, dhash, ahash, created_at
+                        SELECT id, student_id, assign_id, submission_url, phash, dhash, ahash, created_at
                         FROM submissions
                         WHERE student_id != $1
                         AND created_at > $2
@@ -583,7 +589,7 @@ class DatabaseManager:
             else:
                 records = await self._fetch(
                     """
-                        SELECT id, student_id, assign_id,image_url, phash, dhash, ahash, created_at
+                        SELECT id, student_id, assign_id, submission_url, phash, dhash, ahash, created_at
                         FROM submissions
                         WHERE student_id != $1
                         AND phash IS NOT NULL 
@@ -615,7 +621,7 @@ class DatabaseManager:
         try:
             records = await self._fetch(
                 """
-                    SELECT id, created_at, phash, dhash, ahash, assign_id, image_url 
+                    SELECT id, created_at, phash, dhash, ahash, assign_id, submission_url 
                     FROM submissions 
                     WHERE student_id = $1 
                     AND phash IS NOT NULL 
@@ -695,11 +701,11 @@ class DatabaseManager:
             vec = self._normalize_vector(embedding_list)
             results = await self._fetch(
                 """
-                    SELECT 
+                        SELECT 
                         submission_id,
                         student_id,
                         assign_id,
-                        image_url,
+                        submission_url,
                         created_at,
                         (clip_embedding <#> $1::vector) * -1 as similarity
                     FROM submissions
@@ -744,11 +750,11 @@ class DatabaseManager:
             vec = self._normalize_vector(embedding_list)
             results = await self._fetch(
                 """
-                    SELECT 
+                        SELECT 
                         submission_id,
                         student_id,
                         assign_id,
-                        image_url,
+                        submission_url,
                         created_at,
                         (clip_embedding <#> $1::vector) * -1 as similarity
                     FROM submissions
