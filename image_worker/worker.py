@@ -12,6 +12,7 @@ from typing import Dict, Optional, Tuple, Any
 from urllib.parse import urlparse
 from dotenv import load_dotenv
 from image_worker.assigment_ref_images import get_reference_images
+from image_worker.gcs_client import is_gcs_url, download_from_gcs, load_gcp_credentials
 
 from config.config import config
 from database.db_manager import DatabaseManager
@@ -28,6 +29,7 @@ from utils.exceptions import (
     NetworkTimeoutError,
     InvalidImageURLError,
     InvalidImageFormatError,
+    GCSDownloadError,
 )
 
 load_dotenv()
@@ -87,6 +89,20 @@ class ImageWorker:
         )
 
         self.vector_handler = None
+        self.gcp_credentials = None
+
+        # Initialize GCP credentials if enabled
+        if config.gcp.gcp_enabled:
+            try:
+                self.gcp_credentials = load_gcp_credentials(config.gcp.gcp_key_path)
+                logger.info(f"GCP credentials loaded from: {config.gcp.gcp_key_path}")
+            except Exception as e:
+                logger.error(f"Failed to load GCP credentials: {e}")
+                if config.environment == "production":
+                    raise GCSDownloadError(
+                        f"GCP authentication failed: {e}",
+                        details={"key_path": config.gcp.gcp_key_path},
+                    )
 
         if not self.use_pgvector:
             self.vector_handler = FAISSHandler(
@@ -123,8 +139,10 @@ class ImageWorker:
         """
         Download image from URL with timeout and validation.
 
+        Supports both public HTTP/HTTPS URLs and authenticated GCS bucket URLs (gs://).
+
         Args:
-            image_url: HTTP/HTTPS URL of the image
+            image_url: HTTP/HTTPS URL or GCS URL (gs://bucket-name/path/to/image)
 
         Returns:
             PIL Image object
@@ -134,7 +152,41 @@ class ImageWorker:
             NetworkTimeoutError: If download times out
             InvalidImageFormatError: If file is not a valid image
             ImageDownloadError: For other download failures
+            GCSDownloadError: For GCS authentication, bucket, blob, or download failures
         """
+        # Check if URL is a GCS URL
+        if is_gcs_url(image_url):
+            if not self.gcp_credentials:
+                raise GCSDownloadError(
+                    "GCP credentials not initialized. Set GCP_ENABLED=true and GCP_KEY_PATH in .env",
+                    details={"url": image_url},
+                )
+            
+            logger.debug(f"Downloading from GCS: url={image_url}")
+            try:
+                image = await download_from_gcs(
+                    image_url,
+                    self.gcp_credentials,
+                    timeout=self.DOWNLOAD_TIMEOUT,
+                )
+                return image
+            except FileNotFoundError as e:
+                raise GCSDownloadError(
+                    f"GCS bucket or blob not found: {str(e)}",
+                    details={"url": image_url},
+                )
+            except ValueError as e:
+                raise GCSDownloadError(
+                    f"Invalid or corrupted image from GCS: {str(e)}",
+                    details={"url": image_url},
+                )
+            except Exception as e:
+                raise GCSDownloadError(
+                    f"GCS download failed: {str(e)}",
+                    details={"url": image_url, "error": str(e)},
+                )
+        
+        # Handle HTTP/HTTPS URLs
         max_retries = self.DOWNLOAD_RETRIES
         for attempt in range(max_retries):
             try:
@@ -553,19 +605,7 @@ class ImageWorker:
 
             logger.info(f"Processing submission: {submission_id}")
 
-            # Check for video URLs before attempting to download
-            media_type = self.image_validator.detect_media_type(submission_url)
-            if media_type == "video":
-                logger.warning(
-                    f"Video URL rejected: submission={submission_id}, url={submission_url}"
-                )
-                video_result = self._create_video_url_result(
-                    submission_id, student_id, assign_id, submission_url
-                )
-                processing_time_ms = int((time.time() - start_time) * 1000)
-                return json.dumps(video_result)
-            else:
-                image_url = submission_url
+            image_url = submission_url
 
             # Check for stock image URLs before downloading
             is_stock, stock_site = self.image_validator.check_stock_image_url(image_url)
@@ -1113,29 +1153,6 @@ class ImageWorker:
             "match_type": "stock_image",
             "plagiarism_source": f"stock_image_{stock_site}",
             "similar_sources": [{"source": stock_site, "url": image_url}],
-        }
-    
-    def _create_video_url_result(
-        self,
-        submission_id: str,
-        student_id: str,
-        assign_id: str,
-        submission_url: str
-    ) -> dict:
-        """Create video URL detection result dictionary."""
-        return {
-            "submission_id": submission_id,
-            "student_id": student_id,
-            "assignment_id": assign_id,
-            "image_url": submission_url,
-            "is_ai_generated": False,
-            "ai_detection_source": "None",
-            "ai_confidence": 0.0,
-            "is_plagiarized": False,
-            "similarity_score": 1.0,
-            "match_type": "original",
-            "plagiarism_source": None,
-            "similar_sources": None,
         }
 
     async def _build_reference_result(

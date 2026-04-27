@@ -12,6 +12,10 @@ aiohappyeyeballs==2.6.1
 aiosignal==1.4.0
 requests==2.32.3
 
+# GCP Cloud Storage
+google-cloud-storage==2.10.0
+google-auth==2.27.0
+
 # Configuration Management (Pydantic v2 compatible)
 pydantic==1.10.24
 python-dotenv==1.2.1

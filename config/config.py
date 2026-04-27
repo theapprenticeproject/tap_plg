@@ -215,6 +215,19 @@ class ImageProcessingConfig(BaseSettings):
         case_sensitive = False
 
 
+class GCPConfig(BaseSettings):
+    """GCP Cloud Storage configuration for authenticated image downloads."""
+
+    gcp_enabled: bool = Field(default=True, env="GCP_ENABLED")
+    gcp_key_path: str = Field(
+        default="", env="GCP_KEY_PATH", description="Path to GCP service account JSON key file"
+    )
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+
 class LoggingConfig(BaseSettings):
     """Logging configuration."""
 
@@ -239,6 +252,7 @@ class AppConfig(BaseSettings):
     detection: DetectionConfig = DetectionConfig()
     vector_search: VectorSearchConfig = VectorSearchConfig()
     image_processing: ImageProcessingConfig = ImageProcessingConfig()
+    gcp: GCPConfig = GCPConfig()
     logging: LoggingConfig = LoggingConfig()
 
     app_name: str = Field(default="MentorMe Plagiarism Detection", env="APP_NAME")
