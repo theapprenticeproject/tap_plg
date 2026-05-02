@@ -3,18 +3,30 @@ import logging
 import signal
 import sys
 import os
+from dotenv import load_dotenv
 from mq.rmq_client import RabbitMQClient
 from plag_checker.submissions_checker import SubmissionChecker
-from dotenv import load_dotenv
 
 __version__ = "1.0.0"
 
+load_dotenv()
+
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def get_log_format() -> str:
+    log_format = os.getenv("LOG_FORMAT", DEFAULT_LOG_FORMAT)
+    if log_format.lower() == "json":
+        return DEFAULT_LOG_FORMAT
+    return log_format
+
+
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format=get_log_format(),
 )
 logger = logging.getLogger(__name__)
-load_dotenv()
 
 
 def validate_configuration():

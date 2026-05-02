@@ -11,11 +11,33 @@ import json
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 from PIL import Image
 from google.cloud import storage
 from google.oauth2 import service_account
+from google.api_core.exceptions import NotFound
 
 logger = logging.getLogger(__name__)
+
+
+def resolve_gcp_key_path(key_path: str) -> Path:
+    """Resolve the configured GCP key path for container and local runs."""
+    configured_path = Path(key_path).expanduser()
+
+    if configured_path.exists():
+        return configured_path
+
+    project_root = Path(__file__).resolve().parent.parent
+
+    if configured_path.is_absolute():
+        try:
+            local_path = project_root / "app" / configured_path.relative_to("/app")
+        except ValueError:
+            local_path = configured_path
+    else:
+        local_path = project_root / configured_path
+
+    return local_path
 
 
 def load_gcp_credentials(key_path: str) -> Optional[service_account.Credentials]:
@@ -33,15 +55,15 @@ def load_gcp_credentials(key_path: str) -> Optional[service_account.Credentials]
         ValueError: If key file is invalid JSON or missing required fields
     """
     try:
-        key_file = Path(key_path)
+        key_file = resolve_gcp_key_path(key_path)
         if not key_file.exists():
-            raise FileNotFoundError(f"GCP key file not found: {key_path}")
+            raise FileNotFoundError(f"GCP key file not found: {key_file}")
 
         with open(key_file, "r") as f:
             key_data = json.load(f)
 
         credentials = service_account.Credentials.from_service_account_info(key_data)
-        logger.debug(f"GCP credentials loaded successfully from: {key_path}")
+        logger.debug(f"GCP credentials loaded successfully from: {key_file}")
         return credentials
 
     except FileNotFoundError as e:
@@ -68,11 +90,17 @@ def parse_gcs_url(gcs_url: str) -> tuple[str, str]:
     Raises:
         ValueError: If URL is not a valid GCS URL
     """
-    if not gcs_url.startswith("gs://"):
-        raise ValueError(f"Invalid GCS URL: {gcs_url}. Must start with 'gs://'")
-
-    # Remove gs:// prefix
-    path = gcs_url[5:]
+    if gcs_url.startswith("gs://"):
+        path = gcs_url[5:]
+    elif gcs_url.startswith("https://storage.googleapis.com/"):
+        # support public and authenticated GCS object URLs
+        parsed = urlparse(gcs_url)
+        path = parsed.path.lstrip("/")
+    elif gcs_url.startswith("http://storage.googleapis.com/"):
+        parsed = urlparse(gcs_url)
+        path = parsed.path.lstrip("/")
+    else:
+        raise ValueError(f"Invalid GCS URL: {gcs_url}. Must start with 'gs://' or 'https://storage.googleapis.com/'")
 
     # Split bucket name and blob path
     parts = path.split("/", 1)
@@ -146,6 +174,7 @@ async def download_from_gcs(
             credentials,
             bucket_name,
             blob_path,
+            timeout,
         )
 
         logger.info(f"Successfully downloaded image from GCS: {gcs_url}")
@@ -161,6 +190,7 @@ def _download_gcs_blob_sync(
     credentials: service_account.Credentials,
     bucket_name: str,
     blob_path: str,
+    timeout: int,
 ) -> Image.Image:
     """
     Synchronous helper to download blob from GCS (runs in executor).
@@ -170,6 +200,7 @@ def _download_gcs_blob_sync(
         credentials: GCP service account credentials
         bucket_name: Name of the GCS bucket
         blob_path: Path to the blob within the bucket
+        timeout: Download timeout in seconds
 
     Returns:
         PIL Image object
@@ -181,21 +212,14 @@ def _download_gcs_blob_sync(
     try:
         client = create_gcs_client(credentials)
         bucket = client.bucket(bucket_name)
-
-        # Check if bucket exists
-        if not bucket.exists():
-            raise FileNotFoundError(f"GCS bucket not found: {bucket_name}")
-
         blob = bucket.blob(blob_path)
 
-        # Check if blob exists
-        if not blob.exists():
+        try:
+            blob_content = blob.download_as_bytes(timeout=timeout)
+        except NotFound:
             raise FileNotFoundError(
                 f"GCS blob not found: gs://{bucket_name}/{blob_path}"
             )
-
-        # Download blob content
-        blob_content = blob.download_as_bytes()
 
         # Parse image
         try:
@@ -226,6 +250,12 @@ def is_gcs_url(url: str) -> bool:
         url: URL to check
 
     Returns:
-        True if URL starts with 'gs://', False otherwise
+        True if URL is a GCS URL using 'gs://' or 'storage.googleapis.com', False otherwise
     """
-    return url.startswith("gs://") if url else False
+    if not url:
+        return False
+    return (
+        url.startswith("gs://")
+        or url.startswith("https://storage.googleapis.com/")
+        or url.startswith("http://storage.googleapis.com/")
+    )

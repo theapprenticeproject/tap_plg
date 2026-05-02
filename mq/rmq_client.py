@@ -157,13 +157,17 @@ class RabbitMQClient(MQClient):
         """Publish to feedback queue and handle failures."""
         try:
             await self.channel.default_exchange.publish(
-                aio_pika.Message(body=json.dumps(message_body).encode()),
+                aio_pika.Message(
+                    body=json.dumps(message_body).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
                 routing_key=self.FEEDBACK_QUEUE,
             )
             logger.info(
                 f"Published submission {message_body.get('submission_id')} for user {message_body.get('student_id')}"
             )
-            logger.info(f"Published message body: {message_body}")
+            logger.info(f"Published message body:")
+            logger.info(json.dumps(message_body, indent=2))
         except asyncio.CancelledError as e:
             logger.warning("publish_message CancelledError")
             raise Exception("publish_message CancelledError") from e
@@ -237,7 +241,7 @@ class RabbitMQClient(MQClient):
     async def start_consumer(self, callback):
         """Start consuming messages from the submission queue."""
         await self.connect()
-        await self.submission_queue.consume(lambda msg: callback(msg))
+        await self.submission_queue.consume(lambda msg: callback(msg), no_ack=False)
 
     async def close(self):
         """Close RabbitMQ connection and cancel pending tasks."""

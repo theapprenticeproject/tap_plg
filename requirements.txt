@@ -82,3 +82,6 @@ urllib3==2.6.0
 wcwidth==0.2.14
 wheel==0.45.1
 yarl==1.22.0
+
+
+google-cloud-storage

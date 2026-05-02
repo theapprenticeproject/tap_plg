@@ -32,16 +32,14 @@ class MessageAckManager:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Ensure message is acknowledged exactly once on exit."""
         if not self.acked:
-            # Default behavior: reject without requeue on unhandled errors
-            logger.warning(
-                "Message not explicitly acknowledged, rejecting (requeue=False)"
-            )
+            # Default behavior: requeue unhandled messages to avoid message loss.
+            logger.warning("Message not explicitly acknowledged, requeueing")
             try:
-                await self.message.reject(requeue=False)
+                await self.message.nack(requeue=True)
                 self.acked = True
-                self.action = "reject(cleanup)"
+                self.action = "nack(cleanup, requeue=True)"
             except Exception as e:
-                logger.critical(f"CRITICAL: Failed to reject message in cleanup: {e}")
+                logger.critical(f"CRITICAL: Failed to nack message in cleanup: {e}")
                 # DO NOT set self.acked = True here - let finally block handle it
         return False  # Don't suppress exceptions
 
@@ -123,9 +121,9 @@ class SubmissionChecker:
 
     async def process_submission(self, submission):
         if self._shutdown:
-            logger.warning("Shutdown in progress, rejecting message")
+            logger.warning("Shutdown in progress, requeueing message")
             try:
-                await submission.nack(requeue=False)
+                await submission.nack(requeue=True)
             except Exception as e:
                 logger.error(f"Failed to nack message during shutdown: {e}")
             return
@@ -187,8 +185,11 @@ class SubmissionChecker:
                 )
                 if not dlq_success:
                     logger.error(
-                        f"Failed to send poison message to DLQ for submission {submission_id}"
+                        f"Failed to send poison message to DLQ for submission {submission_id}; requeueing"
                     )
+                    await submission.nack(requeue=True, submission_id=submission_id)
+                    message_acked = True
+                    return
 
                 await submission.nack(requeue=False, submission_id=submission_id)
                 message_acked = True
@@ -267,15 +268,7 @@ class SubmissionChecker:
                 logger.warning(
                     f"Invalid result for submission {submission_id}: {parse_error}"
                 )
-                await self.db.update_status(
-                    submission_id or "unknown",
-                    SubmissionStatus.FAILED,
-                    int(retry_count or 0),
-                    f"Invalid processing result: {str(parse_error)}",
-                )
-                await submission.nack(requeue=False)
-                message_acked = True
-                return
+                raise RuntimeError(f"Invalid processing result: {parse_error}") from parse_error
 
             data["similar_sources"] = result_text.get("similar_sources")
             data["similarity_score"] = result_text.get("similarity_score")
@@ -315,7 +308,7 @@ class SubmissionChecker:
                     f"rejecting message (shutdown={self._shutdown})"
                 )
                 await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
+                    requeue=True, submission_id=submission_id
                 )
                 message_acked = True
             else:
@@ -352,8 +345,11 @@ class SubmissionChecker:
                     )
                     if not dlq_success:
                         logger.error(
-                            f"Failed to send max-retry message to DLQ for submission {submission_id}"
+                            f"Failed to send max-retry message to DLQ for submission {submission_id}; requeueing"
                         )
+                        await submission.nack(requeue=True, submission_id=submission_id)
+                        message_acked = True
+                        return
 
                     await submission.nack(requeue=False, submission_id=submission_id)
                     message_acked = True
@@ -370,9 +366,9 @@ class SubmissionChecker:
             # Final safety net: ensure message is acknowledged
             if not message_acked:
                 logger.warning(
-                    f"Emergency reject for un-acknowledged message {submission_id}"
+                    f"Emergency requeue for un-acknowledged message {submission_id}"
                 )
-                await submission.reject()
+                await submission.nack(requeue=True, submission_id=submission_id)
                 message_acked = True
 
     def get_processor(self, data: dict):

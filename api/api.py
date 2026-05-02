@@ -12,22 +12,29 @@ import aio_pika
 import json
 import uuid
 from dotenv import load_dotenv
-
-from dotenv import load_dotenv
 import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.security import safe_hash_student_id
 
-# load_dotenv()
+load_dotenv()
+
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def get_log_format() -> str:
+    log_format = os.getenv("LOG_FORMAT", DEFAULT_LOG_FORMAT)
+    if log_format.lower() == "json":
+        return DEFAULT_LOG_FORMAT
+    return log_format
+
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format=get_log_format(),
 )
 logger = logging.getLogger(__name__)
-
-load_dotenv()
 
 # RabbitMQ Configuration
 RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "localhost")

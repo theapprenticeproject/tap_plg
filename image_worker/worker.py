@@ -1,15 +1,11 @@
 import json
 from datetime import datetime
 import logging
-import aiohttp
-import ssl
 from PIL import Image
-from io import BytesIO
 import time
 import numpy as np
 import asyncio
 from typing import Dict, Optional, Tuple, Any
-from urllib.parse import urlparse
 from dotenv import load_dotenv
 from image_worker.assigment_ref_images import get_reference_images
 from image_worker.gcs_client import is_gcs_url, download_from_gcs, load_gcp_credentials
@@ -25,10 +21,7 @@ from image_worker.image_validator import ImageValidator
 from utils.exceptions import (
     WorkerNotInitializedError,
     ValidationError,
-    ImageDownloadError,
-    NetworkTimeoutError,
     InvalidImageURLError,
-    InvalidImageFormatError,
     GCSDownloadError,
 )
 
@@ -61,7 +54,6 @@ class ImageWorker:
             config.image_processing.max_image_height,
         )
         self.DOWNLOAD_TIMEOUT = config.image_processing.download_timeout
-        self.DOWNLOAD_RETRIES = config.image_processing.download_retries
 
         self.use_pgvector = config.vector_search.use_pgvector
         self.faiss_top_k = config.vector_search.faiss_top_k
@@ -137,135 +129,56 @@ class ImageWorker:
 
     async def download_image(self, image_url: str) -> Image.Image:
         """
-        Download image from URL with timeout and validation.
+        Download image from a Google Cloud Storage URL.
 
-        Supports both public HTTP/HTTPS URLs and authenticated GCS bucket URLs (gs://).
+        Supports gs:// and storage.googleapis.com URLs via configured GCP
+        credentials.
 
         Args:
-            image_url: HTTP/HTTPS URL or GCS URL (gs://bucket-name/path/to/image)
+            image_url: GCS URL (gs://bucket-name/path/to/image or
+                https://storage.googleapis.com/bucket-name/path/to/image)
 
         Returns:
             PIL Image object
 
         Raises:
             InvalidImageURLError: If URL is malformed or invalid
-            NetworkTimeoutError: If download times out
-            InvalidImageFormatError: If file is not a valid image
-            ImageDownloadError: For other download failures
             GCSDownloadError: For GCS authentication, bucket, blob, or download failures
         """
-        # Check if URL is a GCS URL
-        if is_gcs_url(image_url):
-            if not self.gcp_credentials:
-                raise GCSDownloadError(
-                    "GCP credentials not initialized. Set GCP_ENABLED=true and GCP_KEY_PATH in .env",
-                    details={"url": image_url},
-                )
-            
-            logger.debug(f"Downloading from GCS: url={image_url}")
-            try:
-                image = await download_from_gcs(
-                    image_url,
-                    self.gcp_credentials,
-                    timeout=self.DOWNLOAD_TIMEOUT,
-                )
-                return image
-            except FileNotFoundError as e:
-                raise GCSDownloadError(
-                    f"GCS bucket or blob not found: {str(e)}",
-                    details={"url": image_url},
-                )
-            except ValueError as e:
-                raise GCSDownloadError(
-                    f"Invalid or corrupted image from GCS: {str(e)}",
-                    details={"url": image_url},
-                )
-            except Exception as e:
-                raise GCSDownloadError(
-                    f"GCS download failed: {str(e)}",
-                    details={"url": image_url, "error": str(e)},
-                )
-        
-        # Handle HTTP/HTTPS URLs
-        max_retries = self.DOWNLOAD_RETRIES
-        for attempt in range(max_retries):
-            try:
-                parsed = urlparse(image_url)
-                if not parsed.scheme or not parsed.netloc:
-                    raise InvalidImageURLError(
-                        f"Invalid URL: {image_url}",
-                        details={"url": image_url, "parsed": str(parsed)},
-                    )
+        if not is_gcs_url(image_url):
+            raise InvalidImageURLError(
+                f"Invalid GCS URL: {image_url}",
+                details={"url": image_url},
+            )
 
-                logger.debug(
-                    f"Downloading image: url={image_url[:80]}..., attempt={attempt + 1}/{max_retries}"
-                )
+        if not self.gcp_credentials:
+            raise GCSDownloadError(
+                "GCP credentials not initialized. Set GCP_ENABLED=true and GCP_KEY_PATH in .env",
+                details={"url": image_url},
+            )
 
-                # Configure SSL context based on config
-                if config.image_processing.disable_ssl_verify:
-                    ssl_context = ssl.create_default_context()
-                    ssl_context.check_hostname = False
-                    ssl_context.verify_mode = ssl.CERT_NONE
-                    logger.debug("SSL verification disabled for image download")
-                    connector = aiohttp.TCPConnector(ssl=ssl_context)
-                else:
-                    connector = aiohttp.TCPConnector()
-
-                async with aiohttp.ClientSession(connector=connector) as session:
-                    async with session.get(
-                        image_url,
-                        timeout=aiohttp.ClientTimeout(total=self.DOWNLOAD_TIMEOUT),
-                    ) as response:
-                        response.raise_for_status()
-                        content = await response.read()
-
-                try:
-                    image = Image.open(BytesIO(content))
-                    return image
-                except ValidationError:
-                    raise
-                except Exception as img_error:
-                    raise InvalidImageFormatError(
-                        f"Invalid or corrupted image format: {str(img_error)}",
-                        details={"url": image_url, "error": str(img_error)},
-                    )
-
-            except asyncio.TimeoutError:
-                logger.warning(
-                    f"Download timeout: attempt={attempt + 1}/{max_retries}, "
-                    f"timeout={self.DOWNLOAD_TIMEOUT}s"
-                )
-                if attempt == max_retries - 1:
-                    raise NetworkTimeoutError(
-                        f"Download timed out after {max_retries} attempts",
-                        details={
-                            "url": image_url,
-                            "timeout": self.DOWNLOAD_TIMEOUT,
-                            "retries": max_retries,
-                        },
-                    )
-                await asyncio.sleep(1)
-
-            except aiohttp.ClientError as client_error:
-                logger.warning(
-                    f"Download failed: attempt={attempt + 1}/{max_retries}, "
-                    f"error={str(client_error)}"
-                )
-                if attempt == max_retries - 1:
-                    raise ImageDownloadError(
-                        f"Failed to download image: {str(client_error)}",
-                        details={
-                            "url": image_url,
-                            "error": str(client_error),
-                            "retries": max_retries,
-                        },
-                    )
-                await asyncio.sleep(1)
-
-        raise ImageDownloadError(
-            f"Failed to download image after {max_retries} attempts",
-            details={"url": image_url, "retries": max_retries},
-        )
+        logger.debug(f"Downloading image from GCS: url={image_url}")
+        try:
+            return await download_from_gcs(
+                image_url,
+                self.gcp_credentials,
+                timeout=self.DOWNLOAD_TIMEOUT,
+            )
+        except FileNotFoundError as e:
+            raise GCSDownloadError(
+                f"GCS bucket or blob not found: {str(e)}",
+                details={"url": image_url},
+            )
+        except ValueError as e:
+            raise GCSDownloadError(
+                f"Invalid or corrupted image from GCS: {str(e)}",
+                details={"url": image_url},
+            )
+        except Exception as e:
+            raise GCSDownloadError(
+                f"GCS download failed: {str(e)}",
+                details={"url": image_url, "error": str(e)},
+            )
 
     def _validate_input(self, data: Dict[str, Any]) -> Tuple[str, str, str, str, str]:
         """

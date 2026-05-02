@@ -1,3 +1,6 @@
+ # Credentials
+ app/credentials/*
+
 scratch*
 
 # Python

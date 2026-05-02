@@ -187,6 +187,39 @@ class TestWorkerImageDownload:
         with pytest.raises(Exception):  # Should raise InvalidImageURLError or similar
             await worker.download_image("not-a-url")
 
+    @pytest.mark.asyncio
+    async def test_download_image_storage_google_public_url(self, mocked_worker):
+        """Test public storage.googleapis.com image download via HTTPS fallback."""
+        worker = mocked_worker
+        worker.gcp_credentials = None
+
+        pil_image = await worker.download_image(
+            "https://storage.googleapis.com/assignment_submission/submissions/SUB-IMSUB.png"
+        )
+
+        assert pil_image is not None
+        assert isinstance(pil_image, Image.Image)
+
+    @pytest.mark.asyncio
+    async def test_download_image_storage_google_authenticated_url(self, mocked_worker):
+        """Test authenticated storage.googleapis.com URL downloads via GCS helper when credentials are available."""
+        worker = mocked_worker
+        worker.gcp_credentials = MagicMock()
+
+        sample_image = Image.open(BytesIO(worker._test_mocks["session"].get().read.return_value))
+
+        with patch(
+            "image_worker.worker.download_from_gcs",
+            AsyncMock(return_value=sample_image),
+        ) as mock_download:
+            pil_image = await worker.download_image(
+                "https://storage.googleapis.com/assignment_submission/submissions/SUB-IMSUB.png"
+            )
+
+        assert pil_image is not None
+        assert isinstance(pil_image, Image.Image)
+        mock_download.assert_awaited_once()
+
 
 class TestWorkerSubmissionProcessing:
     """Test submission processing workflow."""

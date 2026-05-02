@@ -154,6 +154,7 @@ class TestRabbitMQClient:
 
             call_args = mock_aio_pika.Message.call_args
             assert call_args[1]["body"] == json.dumps(message_body).encode()
+            assert call_args[1]["delivery_mode"] == mock_aio_pika.DeliveryMode.PERSISTENT
 
             publish_call_args = mock_exchange.publish.call_args
             assert publish_call_args[1]["routing_key"] == "test_feedback"
@@ -248,6 +249,7 @@ class TestRabbitMQClient:
 
             # Verify consumer was started
             mock_queue.consume.assert_called_once()
+            assert mock_queue.consume.call_args[1]["no_ack"] is False
 
     @pytest.mark.asyncio
     async def test_close(self, rmq_client):

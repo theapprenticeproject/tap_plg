@@ -55,13 +55,13 @@ class TestMessageAckManager:
         mock_message.reject.assert_called_once_with(requeue=False)
 
     @pytest.mark.asyncio
-    async def test_auto_reject_on_exit(self, mock_message):
-        """Test that message is auto-rejected if not explicitly acked."""
+    async def test_auto_requeue_on_exit(self, mock_message):
+        """Test that message is auto-requeued if not explicitly acked."""
         async with MessageAckManager(mock_message):
             pass  # Don't ack
 
-        # Should auto-reject with requeue=False
-        mock_message.reject.assert_called_once_with(requeue=False)
+        # Should auto-nack with requeue=True
+        mock_message.nack.assert_called_once_with(requeue=True)
 
     @pytest.mark.asyncio
     async def test_no_double_ack(self, mock_message):
@@ -427,5 +427,5 @@ class TestSubmissionChecker:
 
         await submission_checker.process_submission(mock_message)
 
-        # Should reject message immediately
-        mock_message.nack.assert_called_once_with(requeue=False)
+        # Should requeue message immediately
+        mock_message.nack.assert_called_once_with(requeue=True)
