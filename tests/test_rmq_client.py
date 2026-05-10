@@ -22,6 +22,7 @@ class TestRabbitMQClient:
             {
                 "RABBITMQ_HOST": "test-host",
                 "RABBITMQ_PORT": "5672",
+                "RABBITMQ_VHOST": "/",
                 "RABBITMQ_USER": "testuser",
                 "RABBITMQ_PASS": "testpass",
                 "SUBMISSION_QUEUE": "test_submissions",
@@ -35,7 +36,19 @@ class TestRabbitMQClient:
 
     def test_init_default_values(self):
         """Test initialization with default values from config."""
-        client = RabbitMQClient()
+        with patch.dict(
+            "os.environ",
+            {
+                "RABBITMQ_HOST": "localhost",
+                "RABBITMQ_PORT": "5672",
+                "RABBITMQ_VHOST": "/",
+                "SUBMISSION_QUEUE": "plagiarism_submissions",
+                "FEEDBACK_QUEUE": "plagiarism_feedback",
+                "RABBITMQ_PREFETCH_COUNT": "5",
+                "MAX_RETRIES": "3",
+            },
+        ):
+            client = RabbitMQClient()
 
         # Values come from config, not hardcoded defaults
         assert client.RABBITMQ_HOST in ["localhost", "rabbitmq"]
@@ -80,13 +93,16 @@ class TestRabbitMQClient:
 
             # Verify connection was established
             mock_aio_pika.connect_robust.assert_called_once_with(
-                rmq_client.RABBITMQ_URL
+                rmq_client.RABBITMQ_URL, heartbeat=600, timeout=30
             )
             mock_connection.channel.assert_called_once()
             mock_channel.set_qos.assert_called_once_with(prefetch_count=10)
 
             # Verify queues were declared (DLQ + submission + feedback)
             assert mock_channel.declare_queue.call_count == 3
+            for call in mock_channel.declare_queue.call_args_list:
+                assert call.kwargs["durable"] is True
+                assert "passive" not in call.kwargs
 
     @pytest.mark.asyncio
     async def test_connect_retry_on_failure(self, rmq_client):

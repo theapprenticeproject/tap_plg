@@ -91,10 +91,8 @@ class RabbitMQClient(MQClient):
                 )
                 self.channel = await self.connection.channel()
 
-                # Set prefetch count to 1 to avoid multiple slow CLIP inferences in parallel
-                # This prevents heartbeat timeouts from multiple long-running tasks
-                prefetch = int(os.getenv("RABBITMQ_PREFETCH_COUNT", "1"))
-                await self.channel.set_qos(prefetch_count=prefetch)
+                # Keep consumer concurrency bounded for slow CLIP inference workloads.
+                await self.channel.set_qos(prefetch_count=self.PREFETCH_COUNT)
 
                 # Declare Dead Letter Queue first if configured
                 if self.DEAD_LETTER_QUEUE:
@@ -103,40 +101,17 @@ class RabbitMQClient(MQClient):
                     )
                     logger.info(f"Dead Letter Queue declared: {self.DEAD_LETTER_QUEUE}")
 
+                self.submission_queue = await self.channel.declare_queue(
+                    self.SUBMISSION_QUEUE,
+                    durable=True,
+                )
+                logger.info(f"Submission queue declared: {self.SUBMISSION_QUEUE}")
 
-                try:
-                    # First try passive declaration to check if queue exists
-                    self.submission_queue = await self.channel.declare_queue(
-                        self.SUBMISSION_QUEUE, 
-                        durable=True,
-                        passive=True  # Only check, don't create
-                    )
-                    logger.info(f"Submission queue already exists: {self.SUBMISSION_QUEUE}")
-                except Exception:
-                    # Queue doesn't exist, create it
-                    self.submission_queue = await self.channel.declare_queue(
-                        self.SUBMISSION_QUEUE, 
-                        durable=True
-                    )
-                    logger.info(f"Submission queue created: {self.SUBMISSION_QUEUE}")
-
-
-                
-                try:
-                    # First try passive declaration to check if queue exists
-                    self.feedback_queue = await self.channel.declare_queue(
-                        self.FEEDBACK_QUEUE, 
-                        durable=True,
-                        passive=True  # Only check, don't create
-                    )
-                    logger.info(f"Feedback queue already exists: {self.FEEDBACK_QUEUE}")
-                except Exception:
-                    # Queue doesn't exist, create it
-                    self.feedback_queue = await self.channel.declare_queue(
-                        self.FEEDBACK_QUEUE, 
-                        durable=True
-                    )
-                    logger.info(f"Feedback queue created: {self.FEEDBACK_QUEUE}")
+                self.feedback_queue = await self.channel.declare_queue(
+                    self.FEEDBACK_QUEUE,
+                    durable=True,
+                )
+                logger.info(f"Feedback queue declared: {self.FEEDBACK_QUEUE}")
 
 
                 logger.info(
@@ -145,6 +120,10 @@ class RabbitMQClient(MQClient):
                 return
             except Exception as e:
                 logger.error(f"RabbitMQ connection failed: {e}")
+                if self.connection:
+                    await self.connection.close()
+                    self.connection = None
+                    self.channel = None
                 attempt += 1
                 if attempt > self.STARTUP_RETRY_LIMIT:
                     logger.error(
