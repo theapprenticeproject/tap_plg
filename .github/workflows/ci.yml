@@ -1,0 +1,61 @@
+name: CI
+
+# Run the pytest unit suite on every push to main and on every pull request.
+# Integration and slow markers are excluded here because they require live
+# services (PostgreSQL, RabbitMQ) that aren't provisioned in CI; they're meant
+# to be run locally or in a dedicated integration environment.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel a running CI run for a branch when a newer commit lands on the same
+# branch / PR head, so we don't pile up duplicate jobs.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit-tests:
+    name: pytest (unit)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-test.txt
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+
+      - name: Run unit tests
+        run: |
+          # Exclude integration / slow markers (defined in pytest.ini) — those
+          # need live Postgres + RabbitMQ. Disable the global coverage gate
+          # because CI only covers the hermetic subset.
+          pytest -m "not integration and not slow" \
+                 --cov-fail-under=0 \
+                 -ra
+
+      - name: Upload coverage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ github.run_id }}
+          path: |
+            coverage.xml
+            htmlcov/
+          if-no-files-found: ignore
+          retention-days: 14
