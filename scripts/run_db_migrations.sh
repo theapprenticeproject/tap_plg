@@ -1,7 +1,7 @@
-#!/usr/bin/env bash
-set -euo pipefail
+#!/bin/sh
+set -eu
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-postgres.yml}"
 POSTGRES_CONTAINER="${POSTGRES_CONTAINER:-plg-postgresdb}"
@@ -13,9 +13,13 @@ INIT_CHECK_SQL="${INIT_CHECK_SQL:-SELECT to_regclass('public.submissions') IS NO
 cd "$APP_DIR"
 
 if [ -f ".env" ]; then
+  ENV_FILE="$(mktemp)"
+  trap 'rm -f "$ENV_FILE"' EXIT
+  sed 's/\r$//' .env >"$ENV_FILE"
+
   set -a
   # shellcheck disable=SC1091
-  . ./.env
+  . "$ENV_FILE"
   set +a
 else
   echo "ERROR: .env is required in $APP_DIR" >&2
