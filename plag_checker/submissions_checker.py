@@ -187,11 +187,11 @@ class SubmissionChecker:
                     logger.error(
                         f"Failed to send poison message to DLQ for submission {submission_id}; requeueing"
                     )
-                    await submission.nack(requeue=True, submission_id=submission_id)
+                    await submission.nack(requeue=True)
                     message_acked = True
                     return
 
-                await submission.nack(requeue=False, submission_id=submission_id)
+                await submission.nack(requeue=False)
                 message_acked = True
                 return
 
@@ -213,7 +213,7 @@ class SubmissionChecker:
                     0,
                     "No submission_url in image submission",
                 )
-                await submission.nack(requeue=False, submission_id=submission_id)
+                await submission.nack(requeue=False)
                 message_acked = True
                 return
 
@@ -235,7 +235,7 @@ class SubmissionChecker:
                         0,
                         f"System initialization error: {str(init_error)}",
                     )
-                    await submission.nack(requeue=True, submission_id=submission_id)
+                    await submission.nack(requeue=True)
                     message_acked = True
                     return
                 result_text = await processor.process(data)
@@ -298,7 +298,7 @@ class SubmissionChecker:
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e}")
-            await submission.nack(requeue=False, submission_id=submission_id)
+            await submission.nack(requeue=False)
             message_acked = True
 
         except RuntimeError as e:
@@ -307,9 +307,7 @@ class SubmissionChecker:
                     f"Database pool closed during processing of {submission_id}, "
                     f"rejecting message (shutdown={self._shutdown})"
                 )
-                await submission.nack(
-                    requeue=True, submission_id=submission_id
-                )
+                await submission.nack(requeue=True)
                 message_acked = True
             else:
                 raise
@@ -329,7 +327,7 @@ class SubmissionChecker:
                         rc + 1,
                         f"Retry {rc + 1}/{self.MAX_RETRIES}: {str(e)[:200]}",
                     )
-                    await submission.nack(requeue=True, submission_id=submission_id)
+                    await submission.nack(requeue=True)
                     message_acked = True
                 else:
                     await self.db.update_status(
@@ -347,11 +345,11 @@ class SubmissionChecker:
                         logger.error(
                             f"Failed to send max-retry message to DLQ for submission {submission_id}; requeueing"
                         )
-                        await submission.nack(requeue=True, submission_id=submission_id)
+                        await submission.nack(requeue=True)
                         message_acked = True
                         return
 
-                    await submission.nack(requeue=False, submission_id=submission_id)
+                    await submission.nack(requeue=False)
                     message_acked = True
                     logger.warning(
                         f"Message discarded after {rc} retries and sent to DLQ"
@@ -368,7 +366,7 @@ class SubmissionChecker:
                 logger.warning(
                     f"Emergency requeue for un-acknowledged message {submission_id}"
                 )
-                await submission.nack(requeue=True, submission_id=submission_id)
+                await submission.nack(requeue=True)
                 message_acked = True
 
     def get_processor(self, data: dict):

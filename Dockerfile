@@ -20,10 +20,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 
 # Install to explicit location
-RUN python -m pip install --no-cache-dir --prefix=/install --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --no-deps --prefix=/install -r requirements.txt
-
-RUN pip install --prefix=/install -r requirements.txt --no-cache-dir
+RUN python -m pip install --no-cache-dir --upgrade setuptools wheel && \
+    python -m pip install --prefix=/install -r requirements.txt --no-cache-dir
 
 # ============================================
 # Final stage - minimal runtime image

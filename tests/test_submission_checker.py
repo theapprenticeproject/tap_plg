@@ -297,7 +297,7 @@ class TestSubmissionChecker:
         await submission_checker.process_submission(mock_message)
 
         # Should nack without requeue
-        mock_message.nack.assert_called_once_with(requeue=False, submission_id="unknown")
+        mock_message.nack.assert_called_once_with(requeue=False)
 
     @pytest.mark.asyncio
     async def test_process_submission_retry_logic(
@@ -327,7 +327,7 @@ class TestSubmissionChecker:
         await submission_checker.process_submission(mock_message)
 
         # Should nack with requeue (retry)
-        mock_message.nack.assert_called_once_with(requeue=True, submission_id="SUB-003")
+        mock_message.nack.assert_called_once_with(requeue=True)
 
         # Should update status with retry count
         mock_db_manager.update_status.assert_called()
@@ -361,7 +361,7 @@ class TestSubmissionChecker:
 
         submission_checker.client.publish_to_dlq.assert_called_once()
 
-        mock_message.nack.assert_called_once_with(requeue=False, submission_id="SUB-004")
+        mock_message.nack.assert_called_once_with(requeue=False)
 
     @pytest.mark.asyncio
     async def test_process_submission_poison_message(
@@ -382,7 +382,7 @@ class TestSubmissionChecker:
 
         # Should detect poison message and publish to DLQ
         submission_checker.client.publish_to_dlq.assert_called_once()
-        mock_message.nack.assert_called_once_with(requeue=False, submission_id="SUB-005")
+        mock_message.nack.assert_called_once_with(requeue=False)
 
     @pytest.mark.asyncio
     async def test_close_owns_resources(
