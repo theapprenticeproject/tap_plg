@@ -11,18 +11,28 @@ from pydantic import BaseModel, Field, validator
 import aio_pika
 import json
 import uuid
-
 from dotenv import load_dotenv
 import os
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from utils.security import safe_hash_student_id
 
-# load_dotenv()
+load_dotenv()
+
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+
+def get_log_format() -> str:
+    log_format = os.getenv("LOG_FORMAT", DEFAULT_LOG_FORMAT)
+    if log_format.lower() == "json":
+        return DEFAULT_LOG_FORMAT
+    return log_format
+
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
+    format=get_log_format(),
 )
 logger = logging.getLogger(__name__)
 
@@ -32,6 +42,14 @@ RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", "5672")
 RABBITMQ_VHOST = os.getenv("RABBITMQ_VHOST", "/")
 RABBITMQ_USER = os.getenv("RABBITMQ_USER", "admin")
 RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "admin123")
+
+#PRINT THE RABBITMQ CONFIG FOR DEBUGGING
+# logger.info("###################")
+# logger.info(f"RABBITMQ_HOST={RABBITMQ_HOST}")
+# logger.info(f"RABBITMQ_PORT={RABBITMQ_PORT}")
+# logger.info(f"RABBITMQ_VHOST={RABBITMQ_VHOST}")
+# logger.info(f"RABBITMQ_USER={RABBITMQ_USER}")
+# logger.info("###################")
 
 SUBMISSION_QUEUE = os.getenv("SUBMISSION_QUEUE", "plagiarism_submissions")
 FEEDBACK_QUEUE = os.getenv("FEEDBACK_QUEUE", "plagiarism_feedback")
@@ -53,15 +71,42 @@ class SubmissionRequest(BaseModel):
     """Request model for submission creation"""
 
     student_id: str = Field(..., description="Student identifier", min_length=1)
-    image_url: str = Field(..., description="URL of the submitted image", min_length=1)
+    submission_type: str = Field(..., description="Type of submission: text, audio, video, or image")
+    submission_url: Optional[str] = Field(
+        None, description="URL of the submitted resource (required for image submissions)"
+    )
+    submission_text: Optional[str] = Field(
+        None, description="Text content of the submission (required for text submissions)"
+    )
+    submitted_at: Optional[str] = Field(
+        None,
+        description="Original submission timestamp in ISO format. If provided, this value is preserved in the processed result.",
+    )
     assignment_id: Optional[str] = Field(None, description="Assignment identifier")
 
-    @validator("image_url")
-    def validate_url(cls, v):
-        """Validate that image_url is not empty"""
-        if not v or not v.strip():
-            raise ValueError("image_url cannot be empty")
-        return v.strip()
+    @validator("submission_type")
+    def validate_submission_type(cls, v):
+        """Validate that submission_type is one of the supported values"""
+        allowed = {"text", "audio", "video", "image"}
+        if v not in allowed:
+            raise ValueError(f"submission_type must be one of {sorted(allowed)}")
+        return v
+
+    @validator("submission_url", always=True)
+    def validate_submission_url(cls, v, values):
+        if values.get("submission_type") == "image":
+            if not v or not v.strip():
+                raise ValueError("submission_url is required for image submissions")
+            return v.strip()
+        return v
+
+    @validator("submission_text", always=True)
+    def validate_submission_text(cls, v, values):
+        if values.get("submission_type") == "text":
+            if not v or not v.strip():
+                raise ValueError("submission_text is required for text submissions")
+            return v.strip()
+        return v
 
     @validator("student_id")
     def validate_student_id(cls, v):
@@ -199,13 +244,13 @@ async def send_to_rabbitmq(message: dict, queue_name: str):
 )
 async def create_submission(request: SubmissionRequest):
     """
-    Submit an image for plagiarism detection
+    Submit a new user submission for plagiarism detection
 
-    Creates a new plagiarism check submission by sending the image URL
-    and metadata to the processing queue.
+    Creates a new plagiarism check submission by sending submission metadata
+    to the processing queue.
 
     Args:
-        request: Submission request containing student_id, image_url, and optional assignment_id
+        request: Submission request containing student_id, submission_type, submission_url, and optional assignment_id
 
     Returns:
         SubmissionResponse with submission details and unique ID
@@ -237,9 +282,11 @@ async def create_submission(request: SubmissionRequest):
         payload = {
             "student_id": hashed_student_id,
             "submission_id": submission_id,
-            "img_url": request.image_url,
+            "submission_type": request.submission_type,
+            "submission_url": request.submission_url,
+            "submission_text": request.submission_text,
+            "submitted_at": request.submitted_at,
             "assign_id": assignment_id,
-            "submitted_at": datetime.datetime.utcnow().isoformat(),
         }
 
         # Send to RabbitMQ

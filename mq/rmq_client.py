@@ -91,10 +91,8 @@ class RabbitMQClient(MQClient):
                 )
                 self.channel = await self.connection.channel()
 
-                # Set prefetch count to 1 to avoid multiple slow CLIP inferences in parallel
-                # This prevents heartbeat timeouts from multiple long-running tasks
-                prefetch = int(os.getenv("RABBITMQ_PREFETCH_COUNT", "1"))
-                await self.channel.set_qos(prefetch_count=prefetch)
+                # Keep consumer concurrency bounded for slow CLIP inference workloads.
+                await self.channel.set_qos(prefetch_count=self.PREFETCH_COUNT)
 
                 # Declare Dead Letter Queue first if configured
                 if self.DEAD_LETTER_QUEUE:
@@ -103,17 +101,18 @@ class RabbitMQClient(MQClient):
                     )
                     logger.info(f"Dead Letter Queue declared: {self.DEAD_LETTER_QUEUE}")
 
-                # Declare main submission queue
                 self.submission_queue = await self.channel.declare_queue(
-                    self.SUBMISSION_QUEUE, durable=True
+                    self.SUBMISSION_QUEUE,
+                    durable=True,
                 )
                 logger.info(f"Submission queue declared: {self.SUBMISSION_QUEUE}")
 
-                # Declare feedback queue for publishing results
                 self.feedback_queue = await self.channel.declare_queue(
-                    self.FEEDBACK_QUEUE, durable=True
+                    self.FEEDBACK_QUEUE,
+                    durable=True,
                 )
                 logger.info(f"Feedback queue declared: {self.FEEDBACK_QUEUE}")
+
 
                 logger.info(
                     f"Connected to RabbitMQ with prefetch_count={self.PREFETCH_COUNT}, all queues declared"
@@ -121,6 +120,10 @@ class RabbitMQClient(MQClient):
                 return
             except Exception as e:
                 logger.error(f"RabbitMQ connection failed: {e}")
+                if self.connection:
+                    await self.connection.close()
+                    self.connection = None
+                    self.channel = None
                 attempt += 1
                 if attempt > self.STARTUP_RETRY_LIMIT:
                     logger.error(
@@ -133,12 +136,17 @@ class RabbitMQClient(MQClient):
         """Publish to feedback queue and handle failures."""
         try:
             await self.channel.default_exchange.publish(
-                aio_pika.Message(body=json.dumps(message_body).encode()),
+                aio_pika.Message(
+                    body=json.dumps(message_body).encode(),
+                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                ),
                 routing_key=self.FEEDBACK_QUEUE,
             )
             logger.info(
                 f"Published submission {message_body.get('submission_id')} for user {message_body.get('student_id')}"
             )
+            logger.info(f"Published message body:")
+            logger.info(json.dumps(message_body, indent=2))
         except asyncio.CancelledError as e:
             logger.warning("publish_message CancelledError")
             raise Exception("publish_message CancelledError") from e
@@ -212,7 +220,7 @@ class RabbitMQClient(MQClient):
     async def start_consumer(self, callback):
         """Start consuming messages from the submission queue."""
         await self.connect()
-        await self.submission_queue.consume(lambda msg: callback(msg))
+        await self.submission_queue.consume(lambda msg: callback(msg), no_ack=False)
 
     async def close(self):
         """Close RabbitMQ connection and cancel pending tasks."""

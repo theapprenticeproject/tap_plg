@@ -4,12 +4,12 @@
 
 set -e
 FULL_SETUP=0
-START_API=0
-COMPOSE_FILE="docker-compose-dev.yml"
+START_API=1
+COMPOSE_FILE="docker-compose-prod.yml"
 
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
-        --full-setup) FULL_SETUP=1; shift ;;
+        --full-setup) FULpodmanL_SETUP=1; shift ;;
         --with-api) START_API=1; shift ;;
         --prod) COMPOSE_FILE="docker-compose-prod.yml"; shift ;;
         --dev) COMPOSE_FILE="docker-compose-dev.yml"; shift ;;
@@ -103,7 +103,7 @@ GRAY='\033[0;37m'
 NC='\033[0m'
 
 echo -e "${CYAN}=================================================================="
-echo -e "  MentorMe Plagiarism Checker - Local Development Setup"
+echo -e "  Plagiarism Checker - PROD Development Setup"
 echo -e "  Container Runtime: ${CONTAINER_CMD}"
 echo -e "  Compose File: ${COMPOSE_FILE}"
 echo -e "==================================================================${NC}"
@@ -124,15 +124,10 @@ fi
 
 # Configuration (with defaults)
 POSTGRES_CONTAINER="plg-postgres"
-RABBITMQ_CONTAINER="plg-rabbitmq"
 POSTGRES_PORT="${POSTGRES_PORT:-5432}"
-RABBITMQ_PORT="${RABBITMQ_PORT:-5672}"
-RABBITMQ_MGMT_PORT="${RABBITMQ_MANAGEMENT_PORT:-15672}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-postgres}"
 POSTGRES_DB="${POSTGRES_DB:-plagiarism_db}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
-RABBITMQ_USER="${RABBITMQ_USER:-admin}"
-RABBITMQ_PASS="${RABBITMQ_PASS:-admin123}"
 CLIP_MODEL_URL="${CLIP_MODEL_URL:-https://huggingface.co/laion/CLIP-ViT-L-14-laion2B-s32B-b82K/resolve/main/open_clip_pytorch_model.bin}"
 
 stop_existing_containers() {
@@ -168,7 +163,7 @@ start_containers() {
     
     # Determine which services to start
     #local services="postgres rabbitmq pgadmin plagiarism-checker"
-    local services="postgres rabbitmq plagiarism-checker"
+    local services="postgres plagiarism-checker"
     
     if [ "$START_API" -eq 1 ]; then
         services="$services api"
@@ -216,26 +211,6 @@ wait_for_postgres() {
     exit 1
 }
 
-wait_for_rabbitmq() {
-    echo -e "${YELLOW}Waiting for RabbitMQ...${NC}"
-    
-    local max_attempts=30
-    local attempt=0
-    
-    while [ $attempt -lt $max_attempts ]; do
-        attempt=$((attempt + 1))
-        
-        if curl -s -f http://localhost:$RABBITMQ_MGMT_PORT &>/dev/null; then
-            echo -e "${GREEN}[OK] RabbitMQ ready${NC}"
-            return 0
-        fi
-        
-        sleep 2
-    done
-    
-    echo -e "${RED}ERROR: RabbitMQ timeout${NC}"
-    exit 1
-}
 
 wait_for_api() {
     if [ "$START_API" -ne 1 ]; then
@@ -352,8 +327,6 @@ show_summary() {
     echo ""
     echo -e "${GREEN}✓ Services Running:${NC}"
     echo -e "  PostgreSQL:  localhost:$POSTGRES_PORT (with pgvector)"
-    echo -e "  RabbitMQ:    localhost:$RABBITMQ_PORT"
-    echo -e "  RabbitMQ UI: http://localhost:$RABBITMQ_MGMT_PORT ($RABBITMQ_USER/$RABBITMQ_PASS)"
     
     if [ "$START_API" -eq 1 ]; then
         echo -e "  API:         http://localhost:8000"
@@ -390,7 +363,6 @@ main() {
     stop_existing_containers
     start_containers
     wait_for_postgres
-    wait_for_rabbitmq
     wait_for_api
     initialize_database
     show_summary

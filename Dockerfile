@@ -5,6 +5,7 @@ WORKDIR /app
 # Install build dependencies in a single layer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    vim \
     gcc \
     g++ \
     git \
@@ -18,10 +19,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy only requirements first for better caching
 COPY requirements.txt .
 
-# Use pip cache and install in parallel
-RUN --mount=type=cache,target=/root/.cache/pip \
-    python -m pip install --upgrade pip setuptools wheel && \
-    pip install -r requirements.txt --user --no-warn-script-location
+# Install to explicit location
+RUN python -m pip install --no-cache-dir --upgrade setuptools wheel && \
+    python -m pip install --prefix=/install -r requirements.txt --no-cache-dir
 
 # ============================================
 # Final stage - minimal runtime image
@@ -37,18 +37,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed packages from builder
-COPY --from=builder /root/.local /root/.local
-
-ENV PATH=/root/.local/bin:$PATH
+COPY --from=builder /install /usr/local
 
 # Create necessary directories
 RUN mkdir -p /app/data /app/logs /root/.cache/clip
 
+RUN ls
+
 # Copy application code (do this last for better caching)
 COPY . .
 
-# Lightweight healthcheck
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)" || exit 1
 
 CMD ["python", "app.py"]

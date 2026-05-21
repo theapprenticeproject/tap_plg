@@ -6,7 +6,6 @@ from plag_checker.submission_status import SubmissionStatus
 from mq.mq_client import MQClient
 from database.db_manager import DatabaseManager
 from processors.image_processor import ImageProcessor
-from processors.text_processor import TextProcessor
 
 from typing import TYPE_CHECKING
 
@@ -33,16 +32,14 @@ class MessageAckManager:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Ensure message is acknowledged exactly once on exit."""
         if not self.acked:
-            # Default behavior: reject without requeue on unhandled errors
-            logger.warning(
-                "Message not explicitly acknowledged, rejecting (requeue=False)"
-            )
+            # Default behavior: requeue unhandled messages to avoid message loss.
+            logger.warning("Message not explicitly acknowledged, requeueing")
             try:
-                await self.message.reject(requeue=False)
+                await self.message.nack(requeue=True)
                 self.acked = True
-                self.action = "reject(cleanup)"
+                self.action = "nack(cleanup, requeue=True)"
             except Exception as e:
-                logger.critical(f"CRITICAL: Failed to reject message in cleanup: {e}")
+                logger.critical(f"CRITICAL: Failed to nack message in cleanup: {e}")
                 # DO NOT set self.acked = True here - let finally block handle it
         return False  # Don't suppress exceptions
 
@@ -92,7 +89,6 @@ class SubmissionChecker:
         self._owns_image_worker = image_worker is None
 
         self.image_processor = None  # Will be set after image_worker initialization
-        self.text_processor = TextProcessor()
 
         self.STARTUP_RETRY_DELAY = startup_retry_delay
         self.MAX_RETRIES = int(os.getenv("MAX_RETRIES", "3"))
@@ -119,13 +115,15 @@ class SubmissionChecker:
         if self.image_worker is None:
             raise RuntimeError("ImageWorker failed to initialize")
 
+        logger.info("Submission Checker initialized successfully")
+
         await self.start_consumer()
 
     async def process_submission(self, submission):
         if self._shutdown:
-            logger.warning("Shutdown in progress, rejecting message")
+            logger.warning("Shutdown in progress, requeueing message")
             try:
-                await submission.nack(requeue=False)
+                await submission.nack(requeue=True)
             except Exception as e:
                 logger.error(f"Failed to nack message during shutdown: {e}")
             return
@@ -157,7 +155,13 @@ class SubmissionChecker:
             redelivered = getattr(submission, "redelivered", False)
             delivery_count = 0
 
-            if hasattr(submission, "headers") and submission.headers:
+            from collections.abc import Mapping
+
+            if (
+                hasattr(submission, "headers")
+                and isinstance(submission.headers, Mapping)
+                and submission.headers
+            ):
                 delivery_count = submission.headers.get("x-delivery-count", 0)
 
             if redelivered and delivery_count == 0:
@@ -181,31 +185,35 @@ class SubmissionChecker:
                 )
                 if not dlq_success:
                     logger.error(
-                        f"Failed to send poison message to DLQ for submission {submission_id}"
+                        f"Failed to send poison message to DLQ for submission {submission_id}; requeueing"
                     )
+                    await submission.nack(requeue=True)
+                    message_acked = True
+                    return
 
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )
+                await submission.nack(requeue=False)
                 message_acked = True
                 return
 
-            image_url = data.get("img_url") or data.get("image_url")
+            submission_url = data.get("submission_url")
+            submission_type = data.get("submission_type")
 
             record_id = await self.db.insert_submission_if_not_exists(
-                data, image_url or "", status
+                data, submission_url or "", status
             )
-            if not image_url:
-                logger.error(f"No image URL in submission {submission_id}")
+            if submission_type != "image":
+                logger.info(
+                    f"Skipping plagiarism processing for non-image submission {submission_id}"
+                )
+            elif not submission_url:
+                logger.error(f"No submission_url in image submission {submission_id}")
                 await self.db.update_status(
                     submission_id,
                     SubmissionStatus.FAILED,
                     0,
-                    "No image URL in submission",
+                    "No submission_url in image submission",
                 )
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )
+                await submission.nack(requeue=False)
                 message_acked = True
                 return
 
@@ -215,41 +223,33 @@ class SubmissionChecker:
 
             data["db_record_id"] = str(record_id)  # Convert UUID to string
 
-            # Get processor and validate initialization
-            try:
-                processor = self.get_processor(data)
-            except RuntimeError as init_error:
-                # Processor not initialized - this is a system error, should retry
-                logger.error(f"System not ready: {init_error}")
-                await self.db.update_status(
-                    submission_id,
-                    SubmissionStatus.FAILED,
-                    0,
-                    f"System initialization error: {str(init_error)}",
-                )
-                await submission.nack(
-                    submission, requeue=True, submission_id=submission_id
-                )  # Retry - system might be initializing
-                message_acked = True
-                return
-            except ValueError as validation_error:
-                # Invalid message format - should not retry
-                logger.error(
-                    f"Invalid message format for submission {submission_id}: {validation_error}"
-                )
-                await self.db.update_status(
-                    submission_id,
-                    SubmissionStatus.FAILED,
-                    0,
-                    f"Invalid message format: {str(validation_error)}",
-                )
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )  # Don't retry invalid format
-                message_acked = True
-                return
-
-            result_text = await processor.process(data)
+            submission_type = data.get("submission_type")
+            if submission_type == "image":
+                try:
+                    processor = self.get_processor(data)
+                except RuntimeError as init_error:
+                    logger.error(f"System not ready: {init_error}")
+                    await self.db.update_status(
+                        submission_id,
+                        SubmissionStatus.FAILED,
+                        0,
+                        f"System initialization error: {str(init_error)}",
+                    )
+                    await submission.nack(requeue=True)
+                    message_acked = True
+                    return
+                result_text = await processor.process(data)
+            else:
+                result_text = {
+                    "similar_sources": [],
+                    "similarity_score": 0.0,
+                    "is_plagiarized": False,
+                    "match_type": "original",
+                    "is_ai_generated": False,
+                    "ai_detection_source": "",
+                    "ai_confidence": 0.0,
+                    "plagiarism_source": "",
+                }
 
             try:
                 if isinstance(result_text, (str, bytes, bytearray)):
@@ -268,20 +268,17 @@ class SubmissionChecker:
                 logger.warning(
                     f"Invalid result for submission {submission_id}: {parse_error}"
                 )
-                await self.db.update_status(
-                    submission_id or "unknown",
-                    SubmissionStatus.FAILED,
-                    int(retry_count or 0),
-                    f"Invalid processing result: {str(parse_error)}",
-                )
-                await submission.nack(requeue=False)
-                message_acked = True
-                return
+                raise RuntimeError(f"Invalid processing result: {parse_error}") from parse_error
 
             data["similar_sources"] = result_text.get("similar_sources")
             data["similarity_score"] = result_text.get("similarity_score")
             data["is_plagiarized"] = result_text.get("is_plagiarized")
             data["match_type"] = result_text.get("match_type")
+            data["assignment_id"] = data.pop("assign_id")
+            data["is_ai_generated"] = result_text.get("is_ai_generated", False)
+            data["ai_detection_source"] = result_text.get("ai_detection_source", "")
+            data["ai_confidence"] = result_text.get("ai_confidence", 0.0)
+            data["plagiarism_source"] = result_text.get("plagiarism_source", "")
 
             publish_data = {k: v for k, v in data.items() if k != "db_record_id"}
 
@@ -301,9 +298,7 @@ class SubmissionChecker:
 
         except json.JSONDecodeError as e:
             logger.error(f"Invalid JSON in message: {e}")
-            await submission.nack(
-                submission, requeue=False, submission_id=submission_id
-            )
+            await submission.nack(requeue=False)
             message_acked = True
 
         except RuntimeError as e:
@@ -312,9 +307,7 @@ class SubmissionChecker:
                     f"Database pool closed during processing of {submission_id}, "
                     f"rejecting message (shutdown={self._shutdown})"
                 )
-                await submission.nack(
-                    submission, requeue=False, submission_id=submission_id
-                )
+                await submission.nack(requeue=True)
                 message_acked = True
             else:
                 raise
@@ -334,9 +327,7 @@ class SubmissionChecker:
                         rc + 1,
                         f"Retry {rc + 1}/{self.MAX_RETRIES}: {str(e)[:200]}",
                     )
-                    await submission.nack(
-                        submission, requeue=True, submission_id=submission_id
-                    )
+                    await submission.nack(requeue=True)
                     message_acked = True
                 else:
                     await self.db.update_status(
@@ -352,12 +343,13 @@ class SubmissionChecker:
                     )
                     if not dlq_success:
                         logger.error(
-                            f"Failed to send max-retry message to DLQ for submission {submission_id}"
+                            f"Failed to send max-retry message to DLQ for submission {submission_id}; requeueing"
                         )
+                        await submission.nack(requeue=True)
+                        message_acked = True
+                        return
 
-                    await submission.nack(
-                        submission, requeue=False, submission_id=submission_id
-                    )
+                    await submission.nack(requeue=False)
                     message_acked = True
                     logger.warning(
                         f"Message discarded after {rc} retries and sent to DLQ"
@@ -372,9 +364,9 @@ class SubmissionChecker:
             # Final safety net: ensure message is acknowledged
             if not message_acked:
                 logger.warning(
-                    f"Emergency reject for un-acknowledged message {submission_id}"
+                    f"Emergency requeue for un-acknowledged message {submission_id}"
                 )
-                await submission.reject()
+                await submission.nack(requeue=True)
                 message_acked = True
 
     def get_processor(self, data: dict):
@@ -385,18 +377,18 @@ class SubmissionChecker:
             RuntimeError: If processor is not initialized
             ValueError: If data format is invalid
         """
-        if data.get("img_url"):
+        submission_type = data.get("submission_type")
+        if submission_type == "image":
             if self.image_processor is None:
                 raise RuntimeError(
                     "ImageProcessor not initialized - initialize() must be called before processing messages"
                 )
             return self.image_processor
-        elif data.get("text"):
-            return self.text_processor
-        else:
-            raise ValueError(
-                "Invalid submission format: missing both 'img_url' and 'text' fields"
-            )
+        if submission_type is None:
+            raise ValueError("Invalid submission format: missing submission_type")
+        raise ValueError(
+            f"Unsupported submission_type for processing: {data.get('submission_type')}"
+        )
 
     async def start_consumer(self):
         await self.client.start_consumer(self.process_submission)

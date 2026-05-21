@@ -178,7 +178,9 @@ class TestDatabaseManager:
                 submission_id="SUB-001",
                 student_id="ST001",
                 assign_id="A001",
-                img_url="http://example.com/image.jpg",
+                submission_url="http://example.com/image.jpg",
+                submission_type="image",
+                submission_text=None,
                 hashes={"phash": "abc", "dhash": "def", "ahash": "ghi"},
                 clip_embedding=[0.1] * 512,
             )

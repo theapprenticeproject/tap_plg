@@ -776,11 +776,11 @@ asyncio.run(test())
 #### Build Docker Image
 ```bash
 # Standard build (model downloaded on first run)
-docker build -t mentorme-plagiarism:latest .
+docker build -t plg:latest .
 
 # With HuggingFace token for model prefetch during build (optional)
 # This pre-downloads the CLIP model into the Docker image
-docker build -t mentorme-plagiarism:latest \
+docker build -t plg:latest \
   --build-arg HUGGINGFACE_HUB_TOKEN=your_token_here .
 
 # Note: HuggingFace token is optional - public models can be downloaded without authentication
@@ -804,7 +804,7 @@ docker-compose down
 # docker-compose.yml snippet
 services:
   worker:
-    image: mentorme-plagiarism:latest
+    image: plg:latest
     environment:
       - POSTGRES_HOST=postgres
       - RABBITMQ_HOST=rabbitmq

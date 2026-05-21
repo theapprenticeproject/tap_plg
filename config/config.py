@@ -93,7 +93,7 @@ class DetectionConfig(BaseSettings):
 
     exact_dup_threshold: float = Field(default=0.95, env="EXACT_DUPLICATE_THRESHOLD")
     near_dup_threshold: float = Field(default=0.90, env="NEAR_DUPLICATE_THRESHOLD")
-    semantic_threshold: float = Field(default=0.80, env="SEMANTIC_MATCH_THRESHOLD")
+    semantic_threshold: float = Field(default=0.70, env="SEMANTIC_MATCH_THRESHOLD")
 
     # Hash matching thresholds (Hamming distance, 0-64 bits)
     hash_threshold: int = Field(default=8, env="HASH_MATCH_THRESHOLD")
@@ -215,6 +215,19 @@ class ImageProcessingConfig(BaseSettings):
         case_sensitive = False
 
 
+class GCPConfig(BaseSettings):
+    """GCP Cloud Storage configuration for authenticated image downloads."""
+
+    gcp_enabled: bool = Field(default=True, env="GCP_ENABLED")
+    gcp_key_path: str = Field(
+        default="", env="GCP_KEY_PATH", description="Path to GCP service account JSON key file"
+    )
+
+    class Config:
+        env_file = ".env"
+        case_sensitive = False
+
+
 class LoggingConfig(BaseSettings):
     """Logging configuration."""
 
@@ -239,6 +252,7 @@ class AppConfig(BaseSettings):
     detection: DetectionConfig = DetectionConfig()
     vector_search: VectorSearchConfig = VectorSearchConfig()
     image_processing: ImageProcessingConfig = ImageProcessingConfig()
+    gcp: GCPConfig = GCPConfig()
     logging: LoggingConfig = LoggingConfig()
 
     app_name: str = Field(default="MentorMe Plagiarism Detection", env="APP_NAME")

@@ -80,8 +80,8 @@ if (Test-Path ".env") {
 }
 
 # Configuration (with defaults from environment or hardcoded)
-$POSTGRES_CONTAINER = "mentorme-plagiarism-postgres"
-$RABBITMQ_CONTAINER = "mentorme-plagiarism-rabbitmq"
+$POSTGRES_CONTAINER = "plg-postgres"
+$RABBITMQ_CONTAINER = "plg-rabbitmq"
 $POSTGRES_PORT = if ($env:POSTGRES_PORT) { $env:POSTGRES_PORT } else { 5432 }
 $RABBITMQ_PORT = if ($env:RABBITMQ_PORT) { $env:RABBITMQ_PORT } else { 5672 }
 $RABBITMQ_MGMT_PORT = if ($env:RABBITMQ_MANAGEMENT_PORT) { $env:RABBITMQ_MANAGEMENT_PORT } else { 15672 }

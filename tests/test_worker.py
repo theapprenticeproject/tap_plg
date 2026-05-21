@@ -3,6 +3,7 @@ Comprehensive integration tests for ImageWorker to improve coverage.
 Uses extensive mocking to avoid external dependencies (CLIP model, network, etc.).
 """
 
+import json
 import pytest
 import numpy as np
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +11,7 @@ from io import BytesIO
 from PIL import Image
 
 from image_worker.worker import ImageWorker
-from utils.exceptions import ImageProcessingError, ImageDownloadError
+from utils.exceptions import ImageProcessingError, ImageDownloadError, GCSDownloadError
 
 
 @pytest.fixture
@@ -45,7 +46,7 @@ def sample_submission_data():
         "submission_id": "SUB-TEST-001",
         "student_id": "ST-TEST-001",
         "assign_id": "A-TEST-001",
-        "img_url": "https://example.com/test.png",
+        "submission_url": "https://example.com/test.png",
         "db_record_id": 1,
     }
 
@@ -187,6 +188,39 @@ class TestWorkerImageDownload:
         with pytest.raises(Exception):  # Should raise InvalidImageURLError or similar
             await worker.download_image("not-a-url")
 
+    @pytest.mark.asyncio
+    async def test_download_image_storage_google_public_url(self, mocked_worker):
+        """Test public storage.googleapis.com image download via HTTPS fallback."""
+        worker = mocked_worker
+        worker.gcp_credentials = None
+
+        pil_image = await worker.download_image(
+            "https://storage.googleapis.com/assignment_submission/submissions/SUB-IMSUB.png"
+        )
+
+        assert pil_image is not None
+        assert isinstance(pil_image, Image.Image)
+
+    @pytest.mark.asyncio
+    async def test_download_image_storage_google_authenticated_url(self, mocked_worker):
+        """Test authenticated storage.googleapis.com URL downloads via GCS helper when credentials are available."""
+        worker = mocked_worker
+        worker.gcp_credentials = MagicMock()
+
+        sample_image = Image.open(BytesIO(worker._test_mocks["session"].get().read.return_value))
+
+        with patch(
+            "image_worker.worker.download_from_gcs",
+            AsyncMock(return_value=sample_image),
+        ) as mock_download:
+            pil_image = await worker.download_image(
+                "https://storage.googleapis.com/assignment_submission/submissions/SUB-IMSUB.png"
+            )
+
+        assert pil_image is not None
+        assert isinstance(pil_image, Image.Image)
+        mock_download.assert_awaited_once()
+
 
 class TestWorkerSubmissionProcessing:
     """Test submission processing workflow."""
@@ -203,6 +237,32 @@ class TestWorkerSubmissionProcessing:
 
         # Verify it returns a result (the workflow completed)
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_process_submission_download_failure_returns_original(
+        self, mocked_worker, sample_submission_data
+    ):
+        """Download failures should be queue-safe original results."""
+        worker = mocked_worker
+        worker.image_validator.check_stock_image_url = MagicMock(
+            return_value=(False, None)
+        )
+        worker.download_image = AsyncMock(
+            side_effect=GCSDownloadError("Invalid or corrupted image from GCS")
+        )
+
+        result = await worker.process_submission(sample_submission_data)
+        result_data = json.loads(result)
+
+        assert "error" not in result_data
+        assert result_data["is_plagiarized"] is False
+        assert result_data["match_type"] == "original"
+        assert result_data["similarity_score"] == 0.0
+        assert result_data["plagiarism_source"] == "none"
+        assert result_data["similar_sources"] == []
+        assert result_data["download_failed"] is True
+        assert "Invalid or corrupted image from GCS" in result_data["download_error"]
+        worker._test_mocks["hash"].compute_hashes.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_process_submission_with_peer_check(self, mocked_worker, mock_db):
@@ -222,7 +282,7 @@ class TestWorkerSubmissionProcessing:
             "submission_id": "SUB-002",
             "student_id": "ST002",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 2,
         }
 
@@ -251,7 +311,7 @@ class TestWorkerSubmissionProcessing:
             "submission_id": "SUB-003",
             "student_id": "ST003",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 3,
         }
 
@@ -274,7 +334,7 @@ class TestWorkerHashDetection:
             "submission_id": "SUB-004",
             "student_id": "ST004",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 4,
         }
 
@@ -298,7 +358,7 @@ class TestWorkerSemanticDetection:
             "submission_id": "SUB-005",
             "student_id": "ST005",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 5,
         }
 
@@ -321,7 +381,7 @@ class TestWorkerAIDetection:
             "submission_id": "SUB-006",
             "student_id": "ST006",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 6,
         }
 
@@ -344,7 +404,7 @@ class TestWorkerImageValidation:
             "submission_id": "SUB-007",
             "student_id": "ST007",
             "assign_id": "A001",
-            "img_url": "https://example.com/test.png",
+            "submission_url": "https://example.com/test.png",
             "db_record_id": 7,
         }
 

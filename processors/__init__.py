@@ -1,17 +1,13 @@
-from .text_processor import TextProcessor
 from .image_processor import ImageProcessor
 
 
 async def get_processor(
-    data: dict, db_manager=None, image_processor=None, text_processor=None
+    data: dict, db_manager=None, image_processor=None
 ):
     """
     Returns appropriate processor based on content type.
-    Priority: if 'img_url' present → ImageProcessor
-    otherwise → TextProcessor
+    Priority: if submission_type is 'image' → ImageProcessor
     """
-    if data.get("img_url"):
+    if data.get("submission_type") == "image":
         return image_processor
-    elif data.get("text"):
-        return text_processor
     return None

@@ -1,3 +1,8 @@
+ # Credentials
+ app/credentials/*
+
+scratch*
+
 # Python
 __pycache__/
 *.py[cod]
@@ -14,6 +19,7 @@ build/
 # Environment variables
 .env
 .env.local
+.env.prod
 
 # Logs
 logs/

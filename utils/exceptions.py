@@ -48,6 +48,12 @@ class InvalidImageFormatError(ImageProcessingError):
     pass
 
 
+class GCSDownloadError(ImageDownloadError):
+    """Failed to download image from GCS bucket (includes auth, bucket, and download errors)."""
+
+    pass
+
+
 class ImageTooLargeError(ImageProcessingError):
     """Image exceeds maximum allowed size."""
 
