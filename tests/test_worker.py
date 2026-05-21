@@ -3,6 +3,7 @@ Comprehensive integration tests for ImageWorker to improve coverage.
 Uses extensive mocking to avoid external dependencies (CLIP model, network, etc.).
 """
 
+import json
 import pytest
 import numpy as np
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +11,7 @@ from io import BytesIO
 from PIL import Image
 
 from image_worker.worker import ImageWorker
-from utils.exceptions import ImageProcessingError, ImageDownloadError
+from utils.exceptions import ImageProcessingError, ImageDownloadError, GCSDownloadError
 
 
 @pytest.fixture
@@ -236,6 +237,32 @@ class TestWorkerSubmissionProcessing:
 
         # Verify it returns a result (the workflow completed)
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_process_submission_download_failure_returns_original(
+        self, mocked_worker, sample_submission_data
+    ):
+        """Download failures should be queue-safe original results."""
+        worker = mocked_worker
+        worker.image_validator.check_stock_image_url = MagicMock(
+            return_value=(False, None)
+        )
+        worker.download_image = AsyncMock(
+            side_effect=GCSDownloadError("Invalid or corrupted image from GCS")
+        )
+
+        result = await worker.process_submission(sample_submission_data)
+        result_data = json.loads(result)
+
+        assert "error" not in result_data
+        assert result_data["is_plagiarized"] is False
+        assert result_data["match_type"] == "original"
+        assert result_data["similarity_score"] == 0.0
+        assert result_data["plagiarism_source"] == "none"
+        assert result_data["similar_sources"] == []
+        assert result_data["download_failed"] is True
+        assert "Invalid or corrupted image from GCS" in result_data["download_error"]
+        worker._test_mocks["hash"].compute_hashes.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_process_submission_with_peer_check(self, mocked_worker, mock_db):

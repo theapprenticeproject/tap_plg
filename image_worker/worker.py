@@ -533,7 +533,22 @@ class ImageWorker:
                 processing_time_ms = int((time.time() - start_time) * 1000)
                 return json.dumps(stock_result)
 
-            image = await self.download_image(image_url)
+            try:
+                image = await self.download_image(image_url)
+            except (GCSDownloadError, InvalidImageURLError) as download_error:
+                logger.warning(
+                    f"Image download failed; marking submission as original: "
+                    f"submission={submission_id}, url={image_url}, error={download_error}",
+                    exc_info=True,
+                )
+                download_failure_result = self._create_download_failure_original_result(
+                    submission_id,
+                    student_id,
+                    assign_id,
+                    image_url,
+                    download_error,
+                )
+                return json.dumps(download_failure_result)
 
             is_ai_generated, ai_source, ai_confidence = (
                 self.ai_detector.check_ai_generated(image)
@@ -1066,6 +1081,32 @@ class ImageWorker:
             "match_type": "stock_image",
             "plagiarism_source": f"stock_image_{stock_site}",
             "similar_sources": [{"source": stock_site, "url": image_url}],
+        }
+
+    def _create_download_failure_original_result(
+        self,
+        submission_id: str,
+        student_id: str,
+        assign_id: str,
+        image_url: str,
+        error: Exception,
+    ) -> dict:
+        """Create an original result when the image cannot be downloaded."""
+        return {
+            "submission_id": submission_id,
+            "student_id": student_id,
+            "assignment_id": assign_id,
+            "image_url": image_url,
+            "is_ai_generated": False,
+            "ai_detection_source": "",
+            "ai_confidence": 0.0,
+            "is_plagiarized": False,
+            "similarity_score": 0.0,
+            "match_type": "original",
+            "plagiarism_source": "none",
+            "similar_sources": [],
+            "download_failed": True,
+            "download_error": str(error),
         }
 
     async def _build_reference_result(
