@@ -1,0 +1,118 @@
+name: tap_plg_local
+
+# tap_plg/docker-compose.yml
+#
+# Standalone compose file for running tap_plg on its own.
+# For the full TAP LMS testbed, use tap_lms/docker/local/docker-compose.yml
+# instead — this file is kept here for tap_plg-only development and testing.
+#
+# Usage:
+#   cp .env.example .env
+#   # Edit .env with your values
+#   docker compose up -d
+#
+# ── CLIP model setup (required before first run) ──────────────────────────────
+# The CLIP model is mounted from your host machine to avoid a 3.5 GB download
+# on every image rebuild. Download it once:
+#
+#   mkdir -p ./models/clip
+#   python3 scripts/download_clip_model.py
+#
+# ── Queue names ────────────────────────────────────────────────────────────────
+# IMPORTANT: The queue names here must match what tap_lms publishes to.
+# tap_lms RabbitMQ Settings DocType controls the names on that side.
+# Update SUBMISSION_QUEUE and FEEDBACK_QUEUE in .env to match.
+# Default values in .env.example are plagiarism_submissions / plagiarism_feedback.
+
+services:
+
+  # ── tap_plg background worker ───────────────────────────────────────────────
+  # Consumes from SUBMISSION_QUEUE, runs plagiarism detection,
+  # publishes results to FEEDBACK_QUEUE.
+  tap_plg_worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: tap_plg_worker
+    env_file:
+      - .env
+    environment:
+      # Explicitly set service hostnames so containers find each other
+      RABBITMQ_HOST: rabbitmq
+      POSTGRES_HOST: postgres
+    volumes:
+      # Mount CLIP model from host — avoids re-downloading on rebuild
+      - ./models:/app/models:ro
+      # Mount data dirs as named volumes for persistence
+      - faiss_data:/app/data/faiss_index
+      - temp_images:/app/data/temp_images
+      - reference_images:/app/data/reference_images
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_started
+    restart: on-failure
+    # CLIP model load takes ~60 seconds on first start
+
+  # ── tap_plg FastAPI ─────────────────────────────────────────────────────────
+  # Health check endpoint + REST API for direct submission queries.
+  tap_plg_api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: tap_plg_api
+    command: ["uvicorn", "api.api:app", "--host", "0.0.0.0", "--port", "8080", "--log-level", "info"]
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+    ports:
+      - "${TAP_PLG_API_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ── PostgreSQL with pgvector ────────────────────────────────────────────────
+  # tap_plg's dedicated database for storing CLIP embeddings and submission
+  # hashes. Uses the pgvector image which includes the vector extension.
+  postgres:
+    image: pgvector/pgvector:pg15
+    container_name: tap_plg_postgres
+    environment:
+      POSTGRES_USER: "${POSTGRES_USER:-postgres}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:-postgres}"
+      POSTGRES_DB: "${POSTGRES_DB:-plagiarism_db}"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # ── RabbitMQ ─────────────────────────────────────────────────────────────────
+  # Only included here for standalone tap_plg development.
+  # In the full TAP LMS testbed this is provided by tap_lms's compose file.
+  rabbitmq:
+    image: rabbitmq:4-management
+    container_name: tap_plg_rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_USER:-guest}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_PASS:-guest}"
+
+volumes:
+  postgres_data:
+  faiss_data:
+  temp_images:
+  reference_images:
