@@ -550,8 +550,17 @@ class ImageWorker:
                 )
                 return json.dumps(download_failure_result)
 
+            _step_t0 = time.monotonic()
             is_ai_generated, ai_source, ai_confidence = (
                 self.ai_detector.check_ai_generated(image)
+            )
+            record_detection_step(
+                logger=logger,
+                submission_id=submission_id,
+                step="ai_detection",
+                status="complete",
+                duration_ms=(time.monotonic() - _step_t0) * 1000,
+                result="ai_generated" if is_ai_generated else "original",
             )
 
             if is_ai_generated and ai_confidence >= 0.70:
@@ -582,7 +591,15 @@ class ImageWorker:
                     f"source={ai_source}, confidence={ai_confidence:.2f}, threshold=0.70"
                 )
 
+            _step_t0 = time.monotonic()
             hashes = self.hash_handler.compute_hashes(image)
+            record_detection_step(
+                logger=logger,
+                submission_id=submission_id,
+                step="hash_check",
+                status="complete",
+                duration_ms=(time.monotonic() - _step_t0) * 1000,
+            )
 
             self_result = await self.check_self_submissions(
                 hashes, student_id, assign_id, datetime.utcnow()
@@ -619,11 +636,20 @@ class ImageWorker:
                     f"Skipping CLIP: strong hash match (similarity={hash_similarity:.4f} >= 0.80)"
                 )
             else:
+                _step_t0 = time.monotonic()
                 (
                     matched_ref_clip,
                     clip_similarity,
                     clip_embedding,
                 ) = await self.check_clip_match(image)
+                record_detection_step(
+                    logger=logger,
+                    submission_id=submission_id,
+                    step="clip_similarity",
+                    status="complete",
+                    duration_ms=(time.monotonic() - _step_t0) * 1000,
+                    result="match" if matched_ref_clip else "no_match",
+                )
 
             ref_result = await self._build_reference_result(
                 hash_match,

@@ -152,6 +152,14 @@ class SubmissionChecker:
 
             submission_id = data.get("submission_id", "unknown")
 
+            # SRE: pipeline trace — step 1 in tap_plg
+            _plg_t0 = time.monotonic()
+            record_submission_received(
+                logger=logger,
+                submission_id=submission_id,
+                student_id=data.get("student_id"),
+            )
+
             redelivered = getattr(submission, "redelivered", False)
             delivery_count = 0
 
@@ -292,6 +300,16 @@ class SubmissionChecker:
             )
             status = SubmissionStatus.EVALUATED
             await self.client.publish_message(publish_data)
+
+            # SRE: pipeline trace — result published
+            record_result_published(
+                logger=logger,
+                submission_id=submission_id,
+                plagiarism_status=data.get("match_type", "original"),
+                is_plagiarized=data.get("is_plagiarized", False),
+                is_ai_generated=data.get("is_ai_generated", False),
+                total_duration_ms=(time.monotonic() - _plg_t0) * 1000,
+            )
 
             await submission.ack()
             message_acked = True

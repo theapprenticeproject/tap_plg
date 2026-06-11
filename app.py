@@ -11,21 +11,23 @@ __version__ = "1.0.0"
 
 load_dotenv()
 
-DEFAULT_LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+def _configure_structured_logging(log_level: str = "INFO") -> None:
+    """
+    Replace the default plain-text formatter with StructuredJsonFormatter.
+    Called once at startup — after this, every logger.info() / logger.error()
+    across the entire codebase emits JSON automatically. No other files need changing.
+    """
+    from monitoring import StructuredJsonFormatter
+    handler = logging.StreamHandler()
+    handler.setFormatter(StructuredJsonFormatter(app_name="tap_plg"))
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
+    root.handlers.clear()
+    root.addHandler(handler)
 
 
-def get_log_format() -> str:
-    log_format = os.getenv("LOG_FORMAT", DEFAULT_LOG_FORMAT)
-    if log_format.lower() == "json":
-        return DEFAULT_LOG_FORMAT
-    return log_format
-
-
-# Configure logging
-logging.basicConfig(
-    level=getattr(logging, os.getenv("LOG_LEVEL", "INFO").upper(), logging.INFO),
-    format=get_log_format(),
-)
+# Configure structured JSON logging at startup
+_configure_structured_logging(log_level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger(__name__)
 
 
