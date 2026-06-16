@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import os
 import time
 from datetime import datetime
 from typing import Any, Dict, Optional, Tuple
@@ -17,6 +18,7 @@ from image_worker.gcs_client import download_from_gcs, is_gcs_url, load_gcp_cred
 from image_worker.hash_handler import HashHandler
 from image_worker.image_validator import ImageValidator
 from image_worker.pgvector_handler import PgVectorHandler
+from monitoring import record_detection_step
 from PIL import Image
 from utils.exceptions import (
     GCSDownloadError,

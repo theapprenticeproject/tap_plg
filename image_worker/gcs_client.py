@@ -8,6 +8,7 @@ service account authentication via JSON key files.
 import asyncio
 import json
 import logging
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
@@ -174,7 +175,9 @@ async def download_from_gcs(
             try:
                 import httpx
 
-                async with httpx.AsyncClient(timeout=timeout) as client:
+                async with httpx.AsyncClient(
+                    timeout=timeout, follow_redirects=True
+                ) as client:
                     response = await client.get(gcs_url)
                     response.raise_for_status()
                     return Image.open(BytesIO(response.content))
