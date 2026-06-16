@@ -1,11 +1,13 @@
 import json
 import logging
 import os
+import time
 
 from plag_checker.submission_status import SubmissionStatus
 from mq.mq_client import MQClient
 from database.db_manager import DatabaseManager
 from processors.image_processor import ImageProcessor
+from monitoring import record_submission_received, record_result_published
 
 from typing import TYPE_CHECKING
 
