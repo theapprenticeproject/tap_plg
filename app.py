@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import os
 import signal
 import sys
-import os
+from logging.handlers import RotatingFileHandler
+
 from dotenv import load_dotenv
 from mq.rmq_client import RabbitMQClient
 from plag_checker.submissions_checker import SubmissionChecker
@@ -11,6 +13,7 @@ __version__ = "1.0.0"
 
 load_dotenv()
 
+
 def _configure_structured_logging(log_level: str = "INFO") -> None:
     """
     Replace the default plain-text formatter with StructuredJsonFormatter.
@@ -18,12 +21,34 @@ def _configure_structured_logging(log_level: str = "INFO") -> None:
     across the entire codebase emits JSON automatically. No other files need changing.
     """
     from monitoring import StructuredJsonFormatter
-    handler = logging.StreamHandler()
-    handler.setFormatter(StructuredJsonFormatter(app_name="tap_plg"))
+
+    formatter = StructuredJsonFormatter(app_name="tap_plg")
+    stream_handler = logging.StreamHandler()
+    stream_handler.setFormatter(formatter)
     root = logging.getLogger()
     root.setLevel(getattr(logging, log_level.upper(), logging.INFO))
     root.handlers.clear()
-    root.addHandler(handler)
+    root.addHandler(stream_handler)
+
+    # Dockerfiles explicitly set WORKDIR to /app folder
+    # so the log path can be /app/logs
+    log_file_path = os.getenv("LOG_FILE_PATH", "/app/logs/tap_plg_structured.log")
+    if log_file_path:
+        try:
+            os.makedirs(os.path.dirname(log_file_path), exist_ok=True)
+            file_handler = RotatingFileHandler(
+                log_file_path,
+                maxBytes=10 * 1024 * 1024,  # 10MB max size of active log file
+                backupCount=5,  # keep past 5 files before overwriting 1st one
+                encoding="utf-8",
+            )
+            file_handler.setFormatter(formatter)
+            root.addHandler(file_handler)
+        except Exception as e:
+            print(
+                f"[monitoring] file handler setup failed for {log_file_path}: {e}",
+                file=sys.stderr,
+            )
 
 
 # Configure structured JSON logging at startup
@@ -44,7 +69,7 @@ def validate_configuration():
     ]
 
     missing = [var for var in required_env_vars if not os.getenv(var)]
-    #print the required env vars and their values for debugging
+    # print the required env vars and their values for debugging
     # for var in required_env_vars:
     #     logger.info("###################")
     #     logger.info(f"{var}={os.getenv(var)}")
