@@ -51,14 +51,14 @@ logging:
     # Requires docker-compose-prod.yml: logging.driver: journald, tag: plg-checker
     tap_plg_checker:
       type: systemd_journald
-      units:
-        - plg-checker
+      matches:
+        - SYSLOG_IDENTIFIER=plg-checker
 
     # ── tap_plg API — via journald ─────────────────────────────────────────
     tap_plg_api:
       type: systemd_journald
-      units:
-        - plg-api
+      matches:
+        - SYSLOG_IDENTIFIER=plg-api
 
     # ── tap_ai structured log ──────────────────────────────────────────────
     # tap_ai deployment details TBD — receiver placeholder only.
