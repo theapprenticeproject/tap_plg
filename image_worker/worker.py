@@ -1,28 +1,30 @@
-import json
-from datetime import datetime
-import logging
-from PIL import Image
-import time
-import numpy as np
 import asyncio
-from typing import Dict, Optional, Tuple, Any
-from dotenv import load_dotenv
-from image_worker.assigment_ref_images import get_reference_images
-from image_worker.gcs_client import is_gcs_url, download_from_gcs, load_gcp_credentials
+import json
+import logging
+import os
+import time
+from datetime import datetime
+from typing import Any, Dict, Optional, Tuple
 
+import numpy as np
 from config.config import config
 from database.db_manager import DatabaseManager
-from image_worker.hash_handler import HashHandler
+from dotenv import load_dotenv
+from image_worker.ai_generated_detector import AIGeneratedDetector
+from image_worker.assigment_ref_images import get_reference_images
 from image_worker.clip_handler import CLIPHandler
 from image_worker.faiss_handler import FAISSHandler
-from image_worker.pgvector_handler import PgVectorHandler
-from image_worker.ai_generated_detector import AIGeneratedDetector
+from image_worker.gcs_client import download_from_gcs, is_gcs_url, load_gcp_credentials
+from image_worker.hash_handler import HashHandler
 from image_worker.image_validator import ImageValidator
+from image_worker.pgvector_handler import PgVectorHandler
+from monitoring import record_detection_step
+from PIL import Image
 from utils.exceptions import (
-    WorkerNotInitializedError,
-    ValidationError,
-    InvalidImageURLError,
     GCSDownloadError,
+    InvalidImageURLError,
+    ValidationError,
+    WorkerNotInitializedError,
 )
 
 load_dotenv()
@@ -129,10 +131,7 @@ class ImageWorker:
 
     async def download_image(self, image_url: str) -> Image.Image:
         """
-        Download image from a Google Cloud Storage URL.
-
-        Supports gs:// and storage.googleapis.com URLs via configured GCP
-        credentials.
+        Download image from a URL (supports GCS and regular HTTP/S fallback).
 
         Args:
             image_url: GCS URL (gs://bucket-name/path/to/image or
@@ -143,21 +142,16 @@ class ImageWorker:
 
         Raises:
             InvalidImageURLError: If URL is malformed or invalid
-            GCSDownloadError: For GCS authentication, bucket, blob, or download failures
+            GCSDownloadError: For GCS-specific failures
+            RuntimeError: For general download failures
         """
-        if not is_gcs_url(image_url):
-            raise InvalidImageURLError(
-                f"Invalid GCS URL: {image_url}",
-                details={"url": image_url},
-            )
-
-        if not self.gcp_credentials:
+        # Note: Centralized environment-aware fallback is now inside download_from_gcs
+        if is_gcs_url(image_url) and not self.gcp_credentials:
             raise GCSDownloadError(
                 "GCP credentials not initialized. Set GCP_ENABLED=true and GCP_KEY_PATH in .env",
                 details={"url": image_url},
             )
 
-        logger.debug(f"Downloading image from GCS: url={image_url}")
         try:
             return await download_from_gcs(
                 image_url,
@@ -169,16 +163,9 @@ class ImageWorker:
                 f"GCS bucket or blob not found: {str(e)}",
                 details={"url": image_url},
             )
-        except ValueError as e:
-            raise GCSDownloadError(
-                f"Invalid or corrupted image from GCS: {str(e)}",
-                details={"url": image_url},
-            )
         except Exception as e:
-            raise GCSDownloadError(
-                f"GCS download failed: {str(e)}",
-                details={"url": image_url, "error": str(e)},
-            )
+            # This catches both GCS and fallback failures
+            raise RuntimeError(f"Image download failed: {str(e)}")
 
     def _validate_input(self, data: Dict[str, Any]) -> Tuple[str, str, str, str, str]:
         """
@@ -193,7 +180,12 @@ class ImageWorker:
         Raises:
             ValidationError: If required fields are missing or invalid
         """
-        required_fields = ["submission_id", "student_id", "submission_url", "db_record_id"]
+        required_fields = [
+            "submission_id",
+            "student_id",
+            "submission_url",
+            "db_record_id",
+        ]
         for field in required_fields:
             if field not in data or not data[field]:
                 raise ValidationError(
@@ -279,11 +271,12 @@ class ImageWorker:
             Exception: If database query fails
         """
         try:
-
-            references = await get_reference_images(assignment_id, self.clip_handler, self.hash_handler)
+            references = await get_reference_images(
+                assignment_id, self.clip_handler, self.hash_handler
+            )
             if not references:
                 return False, None, None, None
-            
+
             # for ref_image in references:
             #     if ref_image["content"] is not None:
             #         hashes = self.hash_handler.compute_hashes(ref_image["content"])
@@ -293,7 +286,6 @@ class ImageWorker:
 
             tasks = [self._async_compare_ref(hashes, ref) for ref in references]
             results = await asyncio.gather(*tasks)
-
 
             best_match = None
             best_score = 999
@@ -405,7 +397,7 @@ class ImageWorker:
 
             if not results:
                 return None, 0.0, None
-            
+
             # print("#"*70)
             # for ref_id, sim, meta in results:
             #     print(f"  Ref ID: {ref_id}, Similarity: {sim:.4f}, Meta: {meta}")
@@ -514,7 +506,9 @@ class ImageWorker:
 
         try:
             extracted = self._validate_input(data)
-            submission_id, student_id, assign_id, submission_url, db_record_id = extracted
+            submission_id, student_id, assign_id, submission_url, db_record_id = (
+                extracted
+            )
 
             logger.info(f"Processing submission: {submission_id}")
 
@@ -550,8 +544,17 @@ class ImageWorker:
                 )
                 return json.dumps(download_failure_result)
 
+            _step_t0 = time.monotonic()
             is_ai_generated, ai_source, ai_confidence = (
                 self.ai_detector.check_ai_generated(image)
+            )
+            record_detection_step(
+                logger=logger,
+                submission_id=submission_id,
+                step="ai_detection",
+                status="complete",
+                duration_ms=(time.monotonic() - _step_t0) * 1000,
+                result="ai_generated" if is_ai_generated else "original",
             )
 
             if is_ai_generated and ai_confidence >= 0.70:
@@ -582,7 +585,15 @@ class ImageWorker:
                     f"source={ai_source}, confidence={ai_confidence:.2f}, threshold=0.70"
                 )
 
+            _step_t0 = time.monotonic()
             hashes = self.hash_handler.compute_hashes(image)
+            record_detection_step(
+                logger=logger,
+                submission_id=submission_id,
+                step="hash_check",
+                status="complete",
+                duration_ms=(time.monotonic() - _step_t0) * 1000,
+            )
 
             self_result = await self.check_self_submissions(
                 hashes, student_id, assign_id, datetime.utcnow()
@@ -593,7 +604,9 @@ class ImageWorker:
                 self_result.get("first_submission_date_for_image", None),
             )
             # hash_check_result = await self.check_db_reference_hash_match(hashes)
-            hash_check_result = await self.check_assignment_reference_hash_match(hashes,assign_id)
+            hash_check_result = await self.check_assignment_reference_hash_match(
+                hashes, assign_id
+            )
 
             (
                 hash_match,
@@ -619,11 +632,20 @@ class ImageWorker:
                     f"Skipping CLIP: strong hash match (similarity={hash_similarity:.4f} >= 0.80)"
                 )
             else:
+                _step_t0 = time.monotonic()
                 (
                     matched_ref_clip,
                     clip_similarity,
                     clip_embedding,
                 ) = await self.check_clip_match(image)
+                record_detection_step(
+                    logger=logger,
+                    submission_id=submission_id,
+                    step="clip_similarity",
+                    status="complete",
+                    duration_ms=(time.monotonic() - _step_t0) * 1000,
+                    result="match" if matched_ref_clip else "no_match",
+                )
 
             ref_result = await self._build_reference_result(
                 hash_match,
@@ -1374,7 +1396,6 @@ class ImageWorker:
 
             # payload_preview = json.dumps(message, indent=2)[:2000]
             # logger.info(f"Result payload preview (2000 chars):\n{payload_preview}...")
-            
 
             return json.dumps(message)
 

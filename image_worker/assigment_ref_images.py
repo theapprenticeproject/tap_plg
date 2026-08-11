@@ -1,6 +1,7 @@
 import base64
 import io
 import os
+import time
 from PIL import Image
 import requests
 from typing import List, Dict, Optional
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 import asyncpg
 from datetime import datetime
 import logging
+from monitoring import emit
 
 load_dotenv()
 
@@ -286,14 +288,35 @@ async def fetch_from_api(
     
     try:
         # Use synchronous requests in async context (consider aiohttp for true async)
-        response = requests.post(
-            api_url,
-            headers=headers,
-            json={"assignment_id": assignment_id},
-            timeout=30
-        )
-        
-        response.raise_for_status()
+        _api_t0 = time.monotonic()
+        _api_status = None
+        try:
+            response = requests.post(
+                api_url,
+                headers=headers,
+                json={"assignment_id": assignment_id},
+                timeout=30
+            )
+            _api_status = response.status_code
+            response.raise_for_status()
+            emit(
+                logger, "info", "tap_lms_api_call",
+                endpoint="get_assignment_context",
+                assignment_id=assignment_id,
+                http_status=_api_status,
+                duration_ms=round((time.monotonic() - _api_t0) * 1000, 2),
+                cached=False,
+            )
+        except Exception as _api_err:
+            emit(
+                logger, "error", "tap_lms_api_call",
+                endpoint="get_assignment_context",
+                assignment_id=assignment_id,
+                http_status=_api_status,
+                duration_ms=round((time.monotonic() - _api_t0) * 1000, 2),
+                error=str(_api_err),
+            )
+            raise
         data = response.json()
         
         reference_images = data.get("message", {}).get("assignment", {}).get("reference_images", [])

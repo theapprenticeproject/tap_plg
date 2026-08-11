@@ -1,13 +1,15 @@
 import json
 import logging
 import os
+import time
+from typing import TYPE_CHECKING
 
-from plag_checker.submission_status import SubmissionStatus
-from mq.mq_client import MQClient
 from database.db_manager import DatabaseManager
+from monitoring import record_result_published, record_submission_received
+from mq.mq_client import MQClient
 from processors.image_processor import ImageProcessor
 
-from typing import TYPE_CHECKING
+from plag_checker.submission_status import SubmissionStatus
 
 if TYPE_CHECKING:
     from image_worker.worker import ImageWorker
@@ -152,6 +154,14 @@ class SubmissionChecker:
 
             submission_id = data.get("submission_id", "unknown")
 
+            # SRE: pipeline trace — step 1 in tap_plg
+            _plg_t0 = time.monotonic()
+            record_submission_received(
+                logger=logger,
+                submission_id=submission_id,
+                student_id=data.get("student_id"),
+            )
+
             redelivered = getattr(submission, "redelivered", False)
             delivery_count = 0
 
@@ -263,12 +273,16 @@ class SubmissionChecker:
                     logger.warning(
                         f"Invalid result for submission {submission_id}: {error_msg}"
                     )
-                    raise ValueError(f"Invalid result: {error_msg}")
+                    # Handle as a processing error within this method instead of raising
+                    # which would bypass the retry/ack logic
+                    raise ValueError(f"Processing failed: {error_msg}")
+
             except (json.JSONDecodeError, ValueError) as parse_error:
-                logger.warning(
-                    f"Invalid result for submission {submission_id}: {parse_error}"
-                )
-                raise RuntimeError(f"Invalid processing result: {parse_error}") from parse_error
+                # We catch this here and re-raise to be caught by the outer Exception handler
+                # which handles retries and DLQ.
+                raise RuntimeError(
+                    f"Invalid processing result: {parse_error}"
+                ) from parse_error
 
             data["similar_sources"] = result_text.get("similar_sources")
             data["similarity_score"] = result_text.get("similarity_score")
@@ -292,6 +306,16 @@ class SubmissionChecker:
             )
             status = SubmissionStatus.EVALUATED
             await self.client.publish_message(publish_data)
+
+            # SRE: pipeline trace — result published
+            record_result_published(
+                logger=logger,
+                submission_id=submission_id,
+                plagiarism_status=data.get("match_type", "original"),
+                is_plagiarized=data.get("is_plagiarized", False),
+                is_ai_generated=data.get("is_ai_generated", False),
+                total_duration_ms=(time.monotonic() - _plg_t0) * 1000,
+            )
 
             await submission.ack()
             message_acked = True

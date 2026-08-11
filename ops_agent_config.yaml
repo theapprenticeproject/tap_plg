@@ -1,0 +1,45 @@
+# /etc/google-cloud-ops-agent/config.yaml
+# TAP PLG SERVER ONLY
+#
+# After editing, restart the agent:
+#   sudo systemctl restart google-cloud-ops-agent
+
+logging:
+  receivers:
+
+    # tap_plg writes structured JSON to /app/logs/tap_plg_structured.log
+    # inside the container, mounted to ~/tap_plg/logs/ on the host.
+    tap_plg_structured:
+      type: files
+      include_paths:
+        - /home/*/tap_plg/logs/tap_plg_structured.log
+      wildcard_refresh_interval: 30s
+
+  processors:
+
+   # ── Parse tap_lms structured JSON ─────────────────────────────────────
+    # Parses each line of gcp_structured.log as JSON and extracts the
+    # timestamp field so it becomes LogEntry.timestamp in Cloud Logging.
+    parse_tap_plg_json:
+      type: parse_json
+      time_key: timestamp
+      time_format: "%Y-%m-%dT%H:%M:%S.%f"
+
+    # ── Promote severity field to LogEntry.severity ────────────────────────
+    # monitoring.py emits `"severity": "ERROR"` as a plain JSON field.
+    # This processor moves it to `logging.googleapis.com/severity` so
+    # Cloud Logging promotes it to the top-level severity field, enabling:
+    #   - Correct colour-coding in Log Explorer
+    #   - Filtering with `severity=ERROR` in alert policies
+    #   - The severity histogram in the Logs Explorer sidebar
+    promote_severity:
+      type: modify_fields
+      fields:
+        severity:
+          move_from: jsonPayload.severity
+
+  service:
+    pipelines:
+      tap_plg_pipeline:
+        receivers: [tap_plg_structured]
+        processors: [parse_tap_plg_json, promote_severity]

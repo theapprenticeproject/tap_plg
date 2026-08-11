@@ -5,17 +5,19 @@ Provides async-compatible methods to download images from GCS buckets using
 service account authentication via JSON key files.
 """
 
-import logging
 import asyncio
 import json
+import logging
+import os
 from io import BytesIO
 from pathlib import Path
 from typing import Optional
 from urllib.parse import urlparse
-from PIL import Image
+
+from google.api_core.exceptions import NotFound
 from google.cloud import storage
 from google.oauth2 import service_account
-from google.api_core.exceptions import NotFound
+from PIL import Image
 
 logger = logging.getLogger(__name__)
 
@@ -100,18 +102,24 @@ def parse_gcs_url(gcs_url: str) -> tuple[str, str]:
         parsed = urlparse(gcs_url)
         path = parsed.path.lstrip("/")
     else:
-        raise ValueError(f"Invalid GCS URL: {gcs_url}. Must start with 'gs://' or 'https://storage.googleapis.com/'")
+        raise ValueError(
+            f"Invalid GCS URL: {gcs_url}. Must start with 'gs://' or 'https://storage.googleapis.com/'"
+        )
 
     # Split bucket name and blob path
     parts = path.split("/", 1)
     if len(parts) < 2:
-        raise ValueError(f"Invalid GCS URL: {gcs_url}. Must include bucket and blob path")
+        raise ValueError(
+            f"Invalid GCS URL: {gcs_url}. Must include bucket and blob path"
+        )
 
     bucket_name = parts[0]
     blob_path = parts[1]
 
     if not bucket_name or not blob_path:
-        raise ValueError(f"Invalid GCS URL: {gcs_url}. Bucket and blob path cannot be empty")
+        raise ValueError(
+            f"Invalid GCS URL: {gcs_url}. Bucket and blob path cannot be empty"
+        )
 
     return bucket_name, blob_path
 
@@ -159,6 +167,24 @@ async def download_from_gcs(
         FileNotFoundError: If bucket or blob not found
         Exception: For other GCS operation failures
     """
+    if not is_gcs_url(gcs_url):
+        # Centralized Fallback: Allow HTTP/S in non-production environments
+        app_env = os.getenv("APP_ENV", "production")
+        if app_env != "production" and gcs_url.startswith(("http://", "https://")):
+            logger.info(f"NON-PROD FALLBACK: Downloading image from HTTP/S: {gcs_url}")
+            try:
+                import httpx
+
+                async with httpx.AsyncClient(
+                    timeout=timeout, follow_redirects=True
+                ) as client:
+                    response = await client.get(gcs_url)
+                    response.raise_for_status()
+                    return Image.open(BytesIO(response.content))
+            except Exception as e:
+                logger.error(f"HTTP/S fallback download failed: {str(e)}")
+                raise RuntimeError(f"Fallback download failed: {str(e)}")
+
     try:
         bucket_name, blob_path = parse_gcs_url(gcs_url)
         logger.debug(
