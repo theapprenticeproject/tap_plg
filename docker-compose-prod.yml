@@ -53,10 +53,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    logging:
-      driver: journald
-      options:
-        tag: "plg-checker"
     deploy:
       resources:
         limits:
@@ -85,10 +81,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    logging:
-      driver: journald
-      options:
-        tag: "plg-api"
     deploy:
       resources:
         limits:

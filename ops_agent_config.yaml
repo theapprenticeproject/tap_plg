@@ -45,20 +45,16 @@ logging:
         - /home/*/frappe-bench/logs/rag_gcp_structured.log
       wildcard_refresh_interval: 30s
 
-    # ── tap_plg checker — via journald ─────────────────────────────────────
-    # tap_plg runs in Podman containers with journald logging driver.
-    # The Ops Agent reads from systemd journal directly.
-    # Requires docker-compose-prod.yml: logging.driver: journald, tag: plg-checker
-    tap_plg_checker:
-      type: systemd_journald
-      matches:
-        - SYSLOG_IDENTIFIER=plg-checker
-
-    # ── tap_plg API — via journald ─────────────────────────────────────────
-    tap_plg_api:
-      type: systemd_journald
-      matches:
-        - SYSLOG_IDENTIFIER=plg-api
+    # ── tap_plg structured log ─────────────────────────────────────────────
+    # tap_plg writes structured JSON to /app/logs/tap_plg_structured.log
+    # inside the container, mounted to ./data/logs/ on the host.
+    # Both plg-checker and plg-api write to the same log file.
+    # LOG_FILE_PATH env var in .env defaults to /app/logs/tap_plg_structured.log
+    tap_plg_structured:
+      type: files
+      include_paths:
+        - /home/*/tap_plg/logs/tap_plg_structured.log
+      wildcard_refresh_interval: 30s
 
     # ── tap_ai structured log ──────────────────────────────────────────────
     # tap_ai deployment details TBD — receiver placeholder only.
@@ -127,12 +123,11 @@ logging:
       match_any:
         - 'jsonPayload.message = "http_request" AND jsonPayload.severity = "INFO"'
 
-    # ── Parse tap_plg JSON from journald ──────────────────────────────────
-    # journald wraps the container stdout in a MESSAGE field.
-    # parse_json with field: message extracts the inner JSON payload.
+    # ── Parse tap_plg JSON ─────────────────────────────────────────────────
+    # Same pattern as tap_lms — each line is a JSON object written directly
+    # to the log file by RotatingFileHandler in app.py.
     parse_tap_plg_json:
       type: parse_json
-      field: message
 
     # ── Promote severity + timestamp for tap_plg ──────────────────────────
     promote_tap_plg_severity:
@@ -156,9 +151,9 @@ logging:
         receivers: [rag_service_structured]
         processors: [parse_tap_lms_json, promote_severity]
 
-      # tap_plg structured logs (checker + API via journald)
+      # tap_plg structured logs (file-based — same pattern as tap_lms)
       tap_plg_pipeline:
-        receivers: [tap_plg_checker, tap_plg_api]
+        receivers: [tap_plg_structured]
         processors: [parse_tap_plg_json, promote_tap_plg_severity]
 
       # Frappe application logs (plain text)
