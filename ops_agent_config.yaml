@@ -1,136 +1,26 @@
 # /etc/google-cloud-ops-agent/config.yaml
-#
-# GCP Ops Agent configuration for TAP LMS servers.
-#
-# NOTE: This is a combined reference config. Each server only needs
-# the receivers/pipelines relevant to its services:
-#   tap_lms server  → tap_lms, rag_service, frappe, nginx, supervisor pipelines
-#   rag_service VM  → rag_service, frappe, nginx, supervisor pipelines
-#   tap_plg VM      → tap_plg_checker, tap_plg_api pipelines
+# TAP PLG SERVER ONLY
 #
 # After editing, restart the agent:
 #   sudo systemctl restart google-cloud-ops-agent
-#
-# Verify logs are arriving:
-#   gcloud logging read 'logName=~"tap_lms_structured"' --limit=5 --project=<PROJECT_ID>
-#
-# ── IMPORTANT: severity field mapping ─────────────────────────────────────────
-# Our monitoring.py emits `"severity": "ERROR"` as a plain JSON field.
-# The Ops Agent only promotes it to LogEntry.severity if named
-# `logging.googleapis.com/severity`. The promote_severity processor does this.
-# Without it, all entries appear grey in Log Explorer and severity filters
-# in alert policies won't work.
-#
-# Similarly, our `timestamp` field is promoted to LogEntry.timestamp via
-# modify_fields (not time_key/time_format — Fluent Bit's strptime does not
-# support %f microseconds, causing parser errors in the agent logs).
-# ─────────────────────────────────────────────────────────────────────────────
 
 logging:
   receivers:
 
-    # ── tap_lms structured log ─────────────────────────────────────────────
-    # Frappe app — writes JSON to a rotating file via RotatingFileHandler.
-    tap_lms_structured:
-      type: files
-      include_paths:
-        - /home/*/frappe-bench/logs/gcp_structured.log
-      wildcard_refresh_interval: 30s
-
-    # ── rag_service structured log ─────────────────────────────────────────
-    # Frappe app (v15) — same logging pattern as tap_lms.
-    rag_service_structured:
-      type: files
-      include_paths:
-        - /home/*/frappe-bench/logs/rag_gcp_structured.log
-      wildcard_refresh_interval: 30s
-
-    # ── tap_plg structured log ─────────────────────────────────────────────
     # tap_plg writes structured JSON to /app/logs/tap_plg_structured.log
-    # inside the container, mounted to ./data/logs/ on the host.
-    # Both plg-checker and plg-api write to the same log file.
-    # LOG_FILE_PATH env var in .env defaults to /app/logs/tap_plg_structured.log
+    # inside the container, mounted to ~/tap_plg/logs/ on the host.
     tap_plg_structured:
       type: files
       include_paths:
         - /home/*/tap_plg/logs/tap_plg_structured.log
       wildcard_refresh_interval: 30s
 
-    # ── tap_ai structured log ──────────────────────────────────────────────
-    # tap_ai deployment details TBD — receiver placeholder only.
-    # tap_ai_structured:
-    #   type: files
-    #   include_paths:
-    #     - /var/log/tap_ai/app.log
-    #   wildcard_refresh_interval: 30s
-
-    # ── Frappe application log (plain text) ───────────────────────────────
-    frappe_app:
-      type: files
-      include_paths:
-        - /home/*/frappe-bench/logs/frappe.log
-        - /home/*/frappe-bench/logs/worker.log
-      wildcard_refresh_interval: 30s
-
-    # ── nginx access + error logs ──────────────────────────────────────────
-    nginx_access:
-      type: files
-      include_paths:
-        - /var/log/nginx/access.log
-        - /home/*/frappe-bench/logs/access.log
-
-    nginx_error:
-      type: files
-      include_paths:
-        - /var/log/nginx/error.log
-
-    # ── Feedback consumer log ──────────────────────────────────────────────
-    feedback_consumer:
-      type: files
-      include_paths:
-        - /home/*/frappe-bench/logs/feedback-consumer.log
-        - /home/*/frappe-bench/logs/feedback-consumer.error.log
-      wildcard_refresh_interval: 30s
-
-    # ── Supervisor logs ────────────────────────────────────────────────────
-    supervisor:
-      type: files
-      include_paths:
-        - /var/log/supervisor/supervisord.log
-
   processors:
 
-    # ── Parse Frappe app structured JSON (tap_lms, rag_service) ───────────
-    # Parses each line as JSON. Fluent Bit strptime does not support %f
-    # (microseconds) so timestamp is promoted via modify_fields instead.
-    parse_tap_lms_json:
-      type: parse_json
-
-    # ── Promote severity + timestamp for Frappe apps ──────────────────────
-    promote_severity:
-      type: modify_fields
-      fields:
-        logging.googleapis.com/severity:
-          move_from: jsonPayload.severity
-        time:
-          move_from: jsonPayload.timestamp
-
-    # ── Exclude high-volume INFO http_request logs ─────────────────────────
-    # Emitted for every API call — useful for metrics but not for storage.
-    # Remove from pipeline if you want full HTTP logs in Cloud Logging.
-    exclude_http_info:
-      type: exclude_logs
-      match_any:
-        - 'jsonPayload.message = "http_request" AND jsonPayload.severity = "INFO"'
-
-    # ── Parse tap_plg JSON ─────────────────────────────────────────────────
-    # Same pattern as tap_lms — each line is a JSON object written directly
-    # to the log file by RotatingFileHandler in app.py.
     parse_tap_plg_json:
       type: parse_json
 
-    # ── Promote severity + timestamp for tap_plg ──────────────────────────
-    promote_tap_plg_severity:
+    promote_severity:
       type: modify_fields
       fields:
         logging.googleapis.com/severity:
@@ -140,53 +30,6 @@ logging:
 
   service:
     pipelines:
-
-      # tap_lms structured logs
-      tap_lms_pipeline:
-        receivers: [tap_lms_structured]
-        processors: [parse_tap_lms_json, promote_severity, exclude_http_info]
-
-      # rag_service structured logs
-      rag_service_pipeline:
-        receivers: [rag_service_structured]
-        processors: [parse_tap_lms_json, promote_severity]
-
-      # tap_plg structured logs (file-based — same pattern as tap_lms)
       tap_plg_pipeline:
         receivers: [tap_plg_structured]
-        processors: [parse_tap_plg_json, promote_tap_plg_severity]
-
-      # Frappe application logs (plain text)
-      frappe_pipeline:
-        receivers: [frappe_app]
-
-      # nginx logs
-      nginx_pipeline:
-        receivers: [nginx_access, nginx_error]
-
-      # Feedback consumer logs
-      feedback_consumer_pipeline:
-        receivers: [feedback_consumer]
-
-      # Supervisor logs
-      supervisor_pipeline:
-        receivers: [supervisor]
-
-# ── Hardware metrics ───────────────────────────────────────────────────────────
-# The Ops Agent collects CPU, memory, disk, network, and process metrics
-# automatically via the built-in hostmetrics receiver. No additional
-# configuration is needed — these are already active by default.
-#
-# Metrics visible in GCP Console → Monitoring → Metrics Explorer:
-#   agent.googleapis.com/cpu/utilization
-#   agent.googleapis.com/memory/usage        (state: used/free/cached/buffered)
-#   agent.googleapis.com/disk/usage          (device: sda1 etc.)
-#   agent.googleapis.com/network/tcp_connections
-#   agent.googleapis.com/processes/count
-#
-# To increase collection frequency (default 60s), uncomment:
-# metrics:
-#   receivers:
-#     hostmetrics:
-#       type: hostmetrics
-#       collection_interval: 30s
+        processors: [parse_tap_plg_json, promote_severity]
